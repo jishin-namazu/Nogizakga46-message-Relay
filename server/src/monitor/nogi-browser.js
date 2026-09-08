@@ -491,21 +491,25 @@ class NogiBrowserMonitor {
     return payload.messages;
   }
 
-  async fetchAllMessages(groupId, maxPages = 10) {
+  async fetchAllMessages(groupId) {
     let allMessages = [];
     let lastMessageId = null;
+    let page = 0;
     
-    for (let page = 0; page < maxPages; page++) {
+    while (true) {
       const messages = await this.fetchTimeline(groupId, this.messageCount);
       if (messages.length === 0) break;
       
       allMessages = allMessages.concat(messages);
+      page++;
       
       if (messages.length < this.messageCount) break;
       
       const oldestMessageId = messages[messages.length - 1]?.id ?? messages[messages.length - 1]?.message_id;
       if (oldestMessageId === lastMessageId) break;
       lastMessageId = oldestMessageId;
+      
+      console.log(`Fetching group ${groupId} page ${page}: ${messages.length} messages, total ${allMessages.length}`);
     }
     
     return allMessages;
