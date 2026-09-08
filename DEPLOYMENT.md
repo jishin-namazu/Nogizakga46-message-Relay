@@ -294,8 +294,39 @@ Invoke-RestMethod `
 
 **完整工作流程：**
 
-1. **查询消息列表获取 ID**
+1. **查询消息列表获取消息 ID**
 2. **下载对应的媒体文件**
+3. **（可选）按成员 ID 过滤消息**
+
+**步骤 0: 获取成员 ID（可选）**
+
+消息查询可以按成员 ID 过滤。获取成员 ID 的方法：
+
+```powershell
+$token = Read-Host 'ACCESS_TOKEN'
+
+# 方法 1: 从任意消息中查看成员信息
+$messages = Invoke-RestMethod `
+  -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?limit=20' `
+  -Headers @{ Authorization = "Bearer $token" }
+
+# 查看所有消息的成员 ID 和名称
+$messages | Select-Object member_id, member_name | Sort-Object member_id -Unique
+
+# 方法 2: 查看特定成员的消息来确认 ID
+$messages | Where-Object { $_.member_name -like "*成员名*" } | Select-Object member_id, member_name -First 1
+```
+
+输出示例：
+```
+member_id member_name
+--------- -----------
+12        山下美月
+15        齋藤飛鳥
+23        遠藤さくら
+```
+
+记下你关注的成员 ID，用于后续查询。
 
 **步骤 1: 查询消息列表**
 
@@ -308,7 +339,7 @@ $messages = Invoke-RestMethod `
   -Headers @{ Authorization = "Bearer $token" }
 
 # 查看消息信息
-$messages | Format-Table id, member_name, created_at, content
+$messages | Format-Table id, member_name, member_id, created_at, content
 ```
 
 **API 查询参数：**
