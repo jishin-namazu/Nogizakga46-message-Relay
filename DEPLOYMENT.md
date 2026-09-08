@@ -88,16 +88,15 @@ node upload-session.js .\nogi-browser-state.json https://nogi-relay.fly.dev YOUR
 
 **备用方式(使用 SSH):**
 
-如果 API 方式不可用，可以通过 SSH 直接上传到 monitor 机器：
+如果 API 方式不可用，可以通过 SSH 直接上传到持久卷：
 
 ```powershell
 Set-Location ..
 flyctl status -a nogi-relay
 flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.json -a nogi-relay --machine MONITOR_MACHINE_ID --mode 0600
-flyctl machine restart MONITOR_MACHINE_ID -a nogi-relay
 ```
 
-会话过期后重新生成并上传；不要把 `nogi-browser-state.json` 提交到 Git。
+上传后 monitor 会自动检测文件变化并重新加载，无需重启。会话过期后重新生成并上传；不要把 `nogi-browser-state.json` 提交到 Git。
 
 ### 2.5 部署和回滚
 
@@ -223,8 +222,9 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
 Set-Location ..
 flyctl status -a nogi-relay
 flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.json -a nogi-relay --machine MONITOR_MACHINE_ID --mode 0600
-flyctl machine restart MONITOR_MACHINE_ID -a nogi-relay
 ```
+
+上传后 monitor 会自动重新加载会话，无需重启。
 
 **检查会话状态:**
 
@@ -384,7 +384,7 @@ foreach ($msg in $messages) {
 
 - 查看 monitor 日志中的 401、会话和订阅错误。
 - 确认 `/data/nogi-browser-state.json` 存在且权限为 0600。
-- 重新生成 state、上传并重启 monitor。
+- 重新生成并上传 state (monitor 会自动重新加载)。
 - 确认账号仍有有效成员订阅。
 
 ### 设备管理
