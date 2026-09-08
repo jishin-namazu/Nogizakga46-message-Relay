@@ -9,6 +9,7 @@ import { authenticate, errorHandler, notFound, requestLogger } from './middlewar
 import devicesRouter from './routes/devices.js';
 import messagesRouter from './routes/messages.js';
 import pushRouter from './routes/push.js';
+import adminRouter from './routes/admin.js';
 import { pool, query as dbQuery } from './db/index.js';
 import mediaArchive from './services/media.js';
 import { recordError } from './services/error-log.js';
@@ -193,6 +194,7 @@ app.post('/init-db', authenticate, async (req, res) => {
 app.use('/v1/devices', authenticate, devicesRouter);
 app.use('/v1/messages', authenticate, messagesRouter);
 app.use('/v1/push', authenticate, pushRouter);
+app.use('/v1/admin', authenticate, adminRouter);
 
 // Keep existing deployments compatible with media archival columns added
 // after the original messages table was created. Both statements are

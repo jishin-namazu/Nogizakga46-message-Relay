@@ -269,6 +269,10 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
 
 **重新上传会话的步骤:**
 
+有两种方式重新上传会话:
+
+**方式 1: 使用 API 上传(推荐,无需重新部署):**
+
 1. 在本地生成新的会话文件:
    ```powershell
    Set-Location .\server
@@ -279,15 +283,14 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
 
 2. 在官网窗口完成登录,确认能看到消息后按回车
 
-3. 上传到 monitor 机器:
+3. 使用上传脚本:
    ```powershell
-   Set-Location ..
-   flyctl status -a nogi-relay
-   flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.json -a nogi-relay --machine MONITOR_MACHINE_ID --mode 0600
+   node upload-session.js .\nogi-browser-state.json https://nogi-relay.fly.dev YOUR_ACCESS_TOKEN
    ```
 
 4. 重启 monitor 机器使会话生效:
    ```powershell
+   flyctl status -a nogi-relay
    flyctl machine restart MONITOR_MACHINE_ID -a nogi-relay
    ```
 
@@ -295,6 +298,46 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
    ```powershell
    flyctl logs --app nogi-relay --no-tail
    ```
+
+**方式 2: 使用 SSH 上传(传统方式):**
+
+1. 在本地生成新的会话文件(同上)
+
+2. 通过 SSH 上传到 monitor 机器:
+   ```powershell
+   Set-Location ..
+   flyctl status -a nogi-relay
+   flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.json -a nogi-relay --machine MONITOR_MACHINE_ID --mode 0600
+   ```
+
+3. 重启 monitor 机器:
+   ```powershell
+   flyctl machine restart MONITOR_MACHINE_ID -a nogi-relay
+   ```
+
+**检查会话状态:**
+```powershell
+node .\server\upload-session.js --status https://nogi-relay.fly.dev YOUR_ACCESS_TOKEN
+```
+
+**使用 PowerShell 直接调用 API:**
+```powershell
+# 上传会话
+$token = Read-Host 'ACCESS_TOKEN'
+$session = Get-Content .\server\nogi-browser-state.json -Raw | ConvertFrom-Json
+$body = @{ session = $session } | ConvertTo-Json -Depth 10
+Invoke-RestMethod `
+  -Uri 'https://nogi-relay.fly.dev/v1/admin/browser-session' `
+  -Method POST `
+  -Headers @{ Authorization = "Bearer $token" } `
+  -ContentType 'application/json' `
+  -Body $body
+
+# 检查会话状态
+Invoke-RestMethod `
+  -Uri 'https://nogi-relay.fly.dev/v1/admin/browser-session/status' `
+  -Headers @{ Authorization = "Bearer $token" }
+```
 
 **安全注意事项:**
 - 会话文件包含完整登录凭证,必须妥善保管

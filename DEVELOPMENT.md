@@ -313,6 +313,8 @@ $token = Read-Host 'ACCESS_TOKEN'; try { Invoke-RestMethod -Uri 'https://nogi-re
 | `POST` | `/v1/push/test-message` | 是 | 发送不落服务器数据库的普通测试消息 |
 | `POST` | `/v1/push/test-call` | 是 | 发送不落服务器数据库的测试语音来电 |
 | `GET` | `/v1/push/logs` | 是 | 查询正式推送日志 |
+| `POST` | `/v1/admin/browser-session` | 是 | 上传新的浏览器会话状态,无需重新部署 |
+| `GET` | `/v1/admin/browser-session/status` | 是 | 检查浏览器会话文件状态 |
 
 ### 注册设备
 
