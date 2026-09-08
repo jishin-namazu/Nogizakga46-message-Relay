@@ -209,6 +209,7 @@ class NogiBrowserMonitor {
 
   async runLoop() {
     try {
+      let loopCount = 0;
       while (this.isRunning) {
         try {
           if (!this.page || this.page.isClosed()) await this.openBrowser();
@@ -216,6 +217,12 @@ class NogiBrowserMonitor {
           if (this.shouldRefreshFrontendSession()) await this.refreshFrontendSession();
           await this.poll();
           this.consecutiveAuthFailures = 0;
+          
+          loopCount++;
+          if (loopCount % 10 === 0) {
+            const memUsage = process.memoryUsage();
+            console.log(`内存状态: RSS=${Math.round(memUsage.rss / 1024 / 1024)}MB, Heap=${Math.round(memUsage.heapUsed / 1024 / 1024)}MB/${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`);
+          }
         } catch (error) {
           const isAuthError = error.message?.includes('官网页面没有发出带 Authorization 的 API 请求')
             || error.message?.includes('官网页面尚未提供访问令牌')
@@ -285,14 +292,25 @@ class NogiBrowserMonitor {
           const executablePath = browserExecutablePath();
           this.browser = await this.browserType.launch({
             headless: this.headless,
-            channel: executablePath
-              ? undefined
-              : process.env.NOGI_BROWSER_CHANNEL || (this.headless ? 'chromium-headless-shell' : undefined),
+            channel: executablePath ? undefined : 'chromium-headless-shell',
             executablePath,
             timeout: 60_000,
             args: [
               '--no-sandbox',
               '--disable-dev-shm-usage',
+              '--disable-gpu',
+              '--disable-software-rasterizer',
+              '--disable-extensions',
+              '--disable-background-networking',
+              '--disable-sync',
+              '--disable-translate',
+              '--disable-features=TranslateUI',
+              '--disable-default-apps',
+              '--no-first-run',
+              '--no-zygote',
+              '--single-process',
+              '--disable-web-security',
+              '--js-flags=--max-old-space-size=256',
             ],
           });
           this.context = await this.browser.newContext(storageState ? { storageState } : {});
@@ -340,9 +358,23 @@ class NogiBrowserMonitor {
     this.observedTokenAt = 0;
     for (const waiter of this.accessTokenWaiters) waiter.reject(new Error('浏览器上下文已关闭'));
     this.accessTokenWaiters.clear();
+    
+    if (global.gc) {
+      global.gc();
+      console.log('强制垃圾回收已执行');
+    }
   }
 
   shouldRestartBrowser() {
+    const memUsage = process.memoryUsage();
+    const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+    const rssMB = Math.round(memUsage.rss / 1024 / 1024);
+    
+    if (rssMB > 850) {
+      console.log(`内存使用过高 (RSS: ${rssMB}MB, Heap: ${heapUsedMB}MB), 触发浏览器重启`);
+      return true;
+    }
+    
     return this.browserStartedAt > 0 && Date.now() - this.browserStartedAt >= this.browserRestartIntervalMs;
   }
 
