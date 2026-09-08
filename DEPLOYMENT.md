@@ -1,99 +1,29 @@
 # Nogi Relay 部署文档
 
-本文件面向部署和维护人员，覆盖生产环境变量、数据库、Fly.io、官网浏览器会话、FCM 推送验证、媒体卷、日志、备份和厂商系统推送。
+本文件面向部署和维护人员,覆盖生产环境配置、Fly.io 部署、官网会话管理、推送验证和故障排查。
 
-本地开发、代码结构、API 细节、Android 构建和安装请查看 [DEVELOPMENT.md](DEVELOPMENT.md)。项目入口见 [README.md](README.md)。
-## 1. 服务器环境变量
+开发环境配置、代码结构、API 细节、环境变量完整列表请查看 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
-### 必需配置
+## 1. 生产环境必需配置
 
-| 变量 | 用途 |
+部署到 Fly.io 前必须配置以下 Secret:
+
+| Secret | 用途 |
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL 连接字符串 |
-| `ACCESS_TOKEN` | 所有 `/v1/*` 接口和 `/init-db` 的 Bearer Token |
+| `ACCESS_TOKEN` | API 认证令牌 |
 | `FIREBASE_PROJECT_ID` | Firebase 项目 ID |
-| `FIREBASE_PRIVATE_KEY_BASE64` | Base64 编码的 Firebase Admin JSON，适合 Fly.io |
-| `FIREBASE_PRIVATE_KEY_JSON` | 直接传入的 Firebase Admin JSON，可替代 Base64 |
-| `FIREBASE_PRIVATE_KEY_PATH` | Firebase Admin JSON 文件路径，适合本地开发 |
+| `FIREBASE_PRIVATE_KEY_BASE64` | Base64 编码的 Firebase Admin JSON |
 
-Firebase 密钥三种方式只需配置一种，读取优先级为：Base64、JSON 字符串、文件路径。
+**监控模式配置:**
+- `NOGI_MONITOR_MODE=browser` - 生产环境使用浏览器模式(推荐)
+- `NOGI_BROWSER_STATE_FILE=/data/nogi-browser-state.json` - 浏览器会话文件路径
 
-### 乃木坂46监控配置
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `NOGI_MONITOR_MODE` | 非 `browser` 时使用直接模式 | 生产环境建议设置为 `browser` |
-| `NOGI_WEB_URL` | `https://message.nogizaka46.com` | 官方网页地址 |
-| `NOGI_API_URL` | `https://api.message.nogizaka46.com` | 官方 API 地址 |
-| `NOGI_APP_ID` | `jp.co.sonymusic.communication.nogizaka 2.5` | 官网请求头标识 |
-| `NOGI_APP_PLATFORM` | `web` | 官网请求平台 |
-| `NOGI_ORGANIZATION_ID` | `1` | 组织 ID |
-| `NOGI_GROUP_IDS` | 空 | 手动限定成员 ID，逗号分隔；空值表示自动读取所有有效订阅 |
-| `NOGI_POLL_INTERVAL_SECONDS` | `60` | 轮询间隔，代码限制最小 15 秒 |
-| `NOGI_MESSAGE_COUNT` | `200` | 每个成员每轮读取数量，代码限制最大 200 |
-| `NOGI_BACKFILL_ON_START` | `true` | 首轮保存历史消息但不推送 |
-| `NOGI_ACCEPT_LANGUAGE` | `zh-CN,en-US,ja` | 官网 API 请求语言 |
-
-### 浏览器模式配置
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `NOGI_BROWSER_STATE_FILE` | `/data/nogi-browser-state.json` | 持久化浏览器登录状态 |
-| `NOGI_ACCESS_TOKEN_STATE_FILE` | `/data/nogi-access-token.json` | 持久化当前短期访问令牌（权限 0600，自动过期） |
-| `NOGI_BROWSER_HEADLESS` | `true` | 服务器使用无界面浏览器 |
-| `NOGI_BROWSER_BLOCK_MEDIA` | `true` | 页面层阻止图片、媒体、字体，减少资源消耗 |
-| `NOGI_BROWSER_AUTH_WAIT_SECONDS` | `30` | 等待页面发出授权请求的时间 |
-| `NOGI_BROWSER_REQUEST_TIMEOUT_SECONDS` | `30` | 官网 API 请求超时 |
-| `NOGI_BROWSER_SETTLE_SECONDS` | `8` | 页面加载后等待 TokenManager 完成工作的时间 |
-| `NOGI_BROWSER_SESSION_REFRESH_INTERVAL_MINUTES` | `30` | 重新加载官网页面以维护会话的间隔 |
-| `NOGI_BROWSER_RESTART_INTERVAL_SECONDS` | `1800` | 重建浏览器进程以释放内存的间隔 |
-| `NOGI_BROWSER_EXECUTABLE_PATH` | 空 | 本地指定 Edge/Chrome/Chromium 路径 |
-| `NOGI_BROWSER_CHANNEL` | headless 时为 `chromium-headless-shell` | Playwright 浏览器通道 |
-| `DB_RETRY_ATTEMPTS` | `6`（生产） | PostgreSQL 瞬时连接失败时的最大尝试次数 |
-| `DB_RETRY_BASE_DELAY_MS` | `1000` | PostgreSQL 重试初始退避时间 |
-| `DB_RETRY_MAX_DELAY_MS` | `15000` | PostgreSQL 重试最大退避时间 |
-| `DB_CONNECTION_TIMEOUT_MS` | `10000` | PostgreSQL 单次连接等待时间 |
-| `LOG_STORAGE_DIR` | `/data/nogi-logs`（生产） | 结构化错误日志目录；monitor 卷上持久保存 |
-
-浏览器模式不自行实现官网 refresh token 协议。官网页面负责刷新，监控进程只观察页面请求中的短期 `Authorization`，在内存中使用，并在官网刷新成功后重新保存浏览器状态。
-
-### 直接模式配置
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `NOGI_ACCESS_TOKEN` | 空 | 官网短期访问令牌 |
-| `NOGI_REFRESH_TOKEN` | 空 | 官网刷新令牌 |
-| `NOGI_AUTH_TKN` | 空 | 官网刷新请求可能需要的会话值 |
-| `NOGI_TOKEN_FILE` | `/app/nogi-token.json` | 直接模式轮换 Token 的持久化文件 |
-| `NOGI_TOKEN_REFRESH_INTERVAL_MINUTES` | `30` | 主动刷新间隔，最小 5 分钟 |
-
-直接模式依赖官网当前实现，稳定性低于浏览器模式，生产环境优先使用浏览器模式。
-
-### 媒体配置
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `MEDIA_STORAGE_DIR` | `/app/nogi-media` | 归档文件目录；Fly.io 使用 `/data/nogi-media` |
-| `MEDIA_MAX_BYTES` | `104857600` | 单个媒体最大 100 MB |
-| `PUBLIC_BASE_URL` | `https://nogi-relay.fly.dev` | API 公网地址 |
-| `PUBLIC_MEDIA_BASE_URL` | 回退到 `PUBLIC_BASE_URL` | 媒体服务公网地址；线上使用 8081 端口 |
-| `NOGI_MEDIA_PORT` | `8081` | monitor 媒体 HTTP 服务内部端口 |
+完整的环境变量列表和说明请查看 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
 ## 2. Fly.io 部署
 
-### 2.1 部署拓扑
-
-`fly.toml` 定义两个进程组：
-
-- `app`：内部端口 8080，对外提供 HTTPS API。
-- `monitor`：内部端口 8081，对外提供受认证保护的媒体服务。
-- `monitor` 挂载 `nogi_media` 持久卷到 `/data`。
-- API 至少保持一台机器运行，monitor 与 API 使用同一发布版本。
-- Docker 基础镜像包含与 Playwright 匹配的 Chromium。
-- API 主端口配置 TCP 健康检查间隔 `15s`、超时 `20s`，并配置 `/health` HTTP 检查间隔 `30s`、超时 `5s`。
-- monitor 媒体端口配置 TCP 健康检查间隔 `30s`、超时 `5s`；这些是 Fly 健康检查，不等同于数据库或官网请求超时。
-
-### 2.2 设置 Secret
+### 2.1 设置 Secret
 
 ```powershell
 flyctl auth login
@@ -103,17 +33,14 @@ flyctl secrets set FIREBASE_PROJECT_ID='YOUR_FIREBASE_PROJECT_ID' -a nogi-relay
 flyctl secrets set FIREBASE_PRIVATE_KEY_BASE64='YOUR_BASE64_FIREBASE_JSON' -a nogi-relay
 ```
 
-Firebase 服务账号三选一：`FIREBASE_PRIVATE_KEY_BASE64`、`FIREBASE_PRIVATE_KEY_JSON` 或 `FIREBASE_PRIVATE_KEY_PATH`。生产环境优先使用 Base64 Secret。
-
-检查 Secret 名称时只显示元数据，不会显示原文：
-
+检查 Secret(不显示原文):
 ```powershell
 flyctl secrets list -a nogi-relay
 ```
 
-不要把 Secret 写进 `fly.toml`、README、日志或提交记录。Secret 丢失后只能重新设置，不能从 Fly.io 读取旧值。
+**重要:** 不要把 Secret 写入 fly.toml、代码或日志。
 
-### 2.3 初始化数据库
+### 2.2 初始化数据库
 
 新数据库优先执行当前 schema：
 
