@@ -4,6 +4,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
@@ -15,6 +16,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,10 +35,14 @@ class VoicePlaybackService : Service() {
     private var player: MediaPlayer? = null
     private var focusRequest: AudioFocusRequest? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private lateinit var audioManager: AudioManager
+    private var speakerOn = false
+    private var outputRoutingJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
         AppGraph.initialize(this)
+        audioManager = getSystemService(AudioManager::class.java)
         serviceScope.launch {
             while (isActive) {
                 publishPlaybackState()
@@ -48,6 +54,12 @@ class VoicePlaybackService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             stopPlayback()
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_SET_SPEAKER) {
+            speakerOn = intent.getBooleanExtra(EXTRA_SPEAKER_ON, false)
+            outputRoutingJob?.cancel()
+            outputRoutingJob = serviceScope.launch { setAudioOutput(speakerOn, fadeOnLegacyAndroid = true) }
             return START_NOT_STICKY
         }
         if (intent?.action == ACTION_SEEK) {
@@ -108,17 +120,19 @@ class VoicePlaybackService : Service() {
         super.onDestroy()
     }
 
-    private fun play(messageId: String, mediaFile: File) {
-        releasePlayer()
+    private suspend fun play(messageId: String, mediaFile: File) {
+        if (currentMessageId != messageId) {
+            releasePlayer()
+        }
         currentMessageId = messageId
+        speakerOn = false
         playing = false
         publishPlaybackState()
-        val audioManager = getSystemService(AudioManager::class.java)
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build(),
             )
             .setOnAudioFocusChangeListener { change ->
@@ -132,13 +146,16 @@ class VoicePlaybackService : Service() {
         focusRequest = request
         audioManager.requestAudioFocus(request)
 
-        player = MediaPlayer().apply {
+        val preparedPlayer = MediaPlayer()
+        player = preparedPlayer
+        preparedPlayer.apply {
             setAudioAttributes(
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build(),
             )
+            setVolume(1f, 1f)
             setDataSource(mediaFile.absolutePath)
             setOnPreparedListener {
                 AppGraph.database.markPlayed(messageId)
@@ -154,8 +171,9 @@ class VoicePlaybackService : Service() {
                 stopPlayback()
                 true
             }
-            prepareAsync()
         }
+        setAudioOutput(speakerOn = false, fadeOnLegacyAndroid = false)
+        preparedPlayer.prepareAsync()
     }
 
     private fun stopPlayback() {
@@ -181,14 +199,81 @@ class VoicePlaybackService : Service() {
     }
 
     private fun releasePlayer() {
+        outputRoutingJob?.cancel()
+        outputRoutingJob = null
         player?.runCatching { stop() }
         player?.release()
         player = null
         currentMessageId = null
         playing = false
         _playbackState.value = VoicePlaybackState()
-        focusRequest?.let { getSystemService(AudioManager::class.java).abandonAudioFocusRequest(it) }
+        focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
         focusRequest = null
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            audioManager.clearCommunicationDevice()
+        } else {
+            @Suppress("DEPRECATION")
+            run { audioManager.isSpeakerphoneOn = false }
+        }
+    }
+
+    private suspend fun setAudioOutput(speakerOn: Boolean, fadeOnLegacyAndroid: Boolean) {
+        android.util.Log.d("VoicePlayback", "setAudioOutput start: speakerOn=$speakerOn, fade=$fadeOnLegacyAndroid, SDK=${android.os.Build.VERSION.SDK_INT}")
+        val preferredPlayerDevice = if (speakerOn) {
+            outputDevices().find { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+        } else {
+            preferredHeadsetDevice()
+                ?: outputDevices().find { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            android.util.Log.d("VoicePlayback", "Using Android 12+ path")
+            if (speakerOn) {
+                val speaker = audioManager.availableCommunicationDevices
+                    .find { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                if (speaker != null && !audioManager.setCommunicationDevice(speaker)) {
+                    android.util.Log.d("VoicePlaybackService", "Failed to select built-in speaker")
+                }
+            } else {
+                audioManager.clearCommunicationDevice()
+            }
+            android.util.Log.d("VoicePlayback", "setAudioOutput done (Android 12+)")
+            return
+        }
+
+        android.util.Log.d("VoicePlayback", "Using legacy path with fade")
+        val activePlayer = player
+        if (fadeOnLegacyAndroid) activePlayer?.runCatching { setVolume(0f, 0f) }
+        @Suppress("DEPRECATION")
+        run { audioManager.isSpeakerphoneOn = speakerOn }
+
+        if (fadeOnLegacyAndroid && activePlayer != null) {
+            for (step in 1..10) {
+                delay(LEGACY_ROUTE_FADE_STEP_MS)
+                val volume = step / 10f
+                activePlayer.runCatching { setVolume(volume, volume) }
+            }
+        }
+        android.util.Log.d("VoicePlayback", "setAudioOutput done (legacy)")
+    }
+
+    private fun outputDevices(): Array<AudioDeviceInfo> =
+        audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+
+    private fun preferredHeadsetDevice(): AudioDeviceInfo? {
+        val devices = outputDevices()
+        val priority = intArrayOf(
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_USB_DEVICE,
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+        )
+        priority.forEach { type ->
+            devices.find { it.type == type }?.let { return it }
+        }
+        return null
     }
 
     companion object {
@@ -196,9 +281,12 @@ class VoicePlaybackService : Service() {
         const val ACTION_PLAY = "com.nogirelay.app.PLAY_VOICE"
         const val ACTION_STOP = "com.nogirelay.app.STOP_VOICE"
         const val ACTION_SEEK = "com.nogirelay.app.SEEK_VOICE"
+        const val ACTION_SET_SPEAKER = "com.nogirelay.app.SET_SPEAKER"
         const val ACTION_PLAYBACK_FINISHED = "com.nogirelay.app.VOICE_FINISHED"
         const val EXTRA_POSITION_MS = "position_ms"
+        const val EXTRA_SPEAKER_ON = "speaker_on"
         private const val PROGRESS_UPDATE_INTERVAL_MS = 200L
+        private const val LEGACY_ROUTE_FADE_STEP_MS = 150L
 
         private val _playbackState = MutableStateFlow(VoicePlaybackState())
         val playbackState: StateFlow<VoicePlaybackState> = _playbackState.asStateFlow()

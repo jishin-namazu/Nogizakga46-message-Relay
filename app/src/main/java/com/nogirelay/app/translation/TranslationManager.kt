@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -36,6 +37,7 @@ object TranslationManager {
         val settings = AppGraph.settings.read()
         if (!settings.translationEnabled || settings.openAiApiKey.isBlank()) return
         val model = settings.openAiModel.trim().takeIf { it.isNotEmpty() } ?: DEFAULT_MODEL
+        val nickname = settings.userNickname
 
         val pending = runCatching { AppGraph.database.pendingTranslations() }.getOrNull() ?: return
         val now = System.currentTimeMillis()
@@ -45,14 +47,35 @@ object TranslationManager {
             scope.launch {
                 try {
                     requestSlots.withPermit {
-                        val text = message.text?.trim().orEmpty()
+                        val originalText = message.text
+                        val text = substituteNickname(originalText, nickname)?.trim().orEmpty()
                         if (!shouldTranslate(text)) {
                             AppGraph.database.saveTranslation(message.id, null)
                         } else {
-                            val translated = requestTranslation(settings.openAiApiKey, model, text)
+                            val paragraphs = text
+                                .replace("\r\n", "\n")
+                                .replace('\r', '\n')
+                                .split("\n")
+                            
+                            val inputJson = JSONObject().apply {
+                                put("paragraphs", JSONArray(paragraphs))
+                            }.toString()
+                            
+                            val resultJson = requestTranslation(settings.openAiApiKey, model, inputJson)
+                                ?.trim()
+                                .orEmpty()
+                            
+                            val translatedParagraphs = runCatching {
+                                val json = JSONObject(resultJson)
+                                val array = json.getJSONArray("paragraphs")
+                                List(array.length()) { index -> array.getString(index) }
+                            }.getOrNull()
+                            
+                            val result = translatedParagraphs?.joinToString("\n").orEmpty()
+                            
                             AppGraph.database.saveTranslation(
                                 message.id,
-                                normalizeTranslationText(text, translated),
+                                result.takeIf { it.isNotBlank() },
                             )
                         }
                         retryAfter.remove(message.id)
@@ -248,18 +271,19 @@ object TranslationManager {
     private const val SYSTEM_PROMPT = """
 You are a professional Simplified Chinese native translator who fluently translates Japanese chat text into Simplified Chinese.
 
+## Input Format
+You will receive a JSON object with a "paragraphs" array containing text segments to translate.
+
 ## Translation Rules
-1. Output only the translated content, without explanations or additional content such as "Here's the translation".
-2. Keep exactly the same number of paragraphs and the same formatting as the original text.
-3. Keep proper nouns, names, URLs, code, numbers, emoji, kaomoji, and other content that should not be translated.
-4. Preserve line breaks, punctuation, honorific nuance, and the original tone.
-5. If the input contains %%, use %% in the output; if it has no %%, do not add %%.
-6. If the input is already Chinese, contains only emoji/symbols, or has no translatable Japanese text, return an empty string.
+1. Translate each paragraph in the array while preserving context across all paragraphs.
+2. Keep proper nouns, names, URLs, code, numbers, emoji, kaomoji, and other content that should not be translated.
+3. Preserve punctuation, honorific nuance, and the original tone.
+4. If a paragraph is already Chinese, contains only emoji/symbols, or has no translatable Japanese text, keep it unchanged or return empty string.
 
-## OUTPUT FORMAT
-Single paragraph input: output the translation directly with no separator or extra text.
-Multi-paragraph input: use %% as the paragraph separator between translated paragraphs.
+## Output Format
+Return ONLY a JSON object with this exact structure:
+{"paragraphs": ["translated paragraph 1", "translated paragraph 2", ...]}
 
-Return only the translation.
+The output array MUST have the same length as the input array. Do not add explanations or any text outside the JSON.
 """
 }

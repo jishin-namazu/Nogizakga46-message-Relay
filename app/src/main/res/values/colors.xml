@@ -2,4 +2,13 @@
 <resources>
     <color name="launcher_background">#FFFFFF</color>
     <color name="splash_background">#FFFFFF</color>
+    
+    <!-- Values used by the official call page (4.7.3). -->
+    <color name="nogi_call_start_background">#9B2CBB</color>
+    <color name="nogi_call_end_background">#FF7473</color>
+    <color name="nogi_call_background">#FFFFFF</color>
+    <color name="nogi_call_text">#363636</color>
+    <color name="nogi_call_control_text">#FFFFFF</color>
+    <color name="nogi_call_speaker_active">#8F34B4</color>
+    <color name="nogi_call_speaker_inactive">#9F9F9F</color>
 </resources>

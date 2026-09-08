@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import com.nogirelay.app.MainActivity
 import com.nogirelay.app.R
@@ -28,22 +29,27 @@ object IncomingCallNotifier {
             putExtra(EXTRA_MESSAGE_ID, message.id)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
-        val creatorOptions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            ActivityOptions.makeBasic().apply {
+        val fullScreenPendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val creatorOptions = ActivityOptions.makeBasic().apply {
                 setPendingIntentCreatorBackgroundActivityStartMode(
                     ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED,
                 )
-            }.toBundle()
+            }
+            PendingIntent.getActivity(
+                context,
+                message.id.hashCode(),
+                fullScreenIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                creatorOptions.toBundle(),
+            )
         } else {
-            null
+            PendingIntent.getActivity(
+                context,
+                message.id.hashCode(),
+                fullScreenIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
         }
-        val fullScreenPendingIntent = PendingIntent.getActivity(
-            context,
-            message.id.hashCode(),
-            fullScreenIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            creatorOptions,
-        )
 
         val answerIntent = Intent(context, CallActionReceiver::class.java).apply {
             action = ACTION_ANSWER
@@ -90,35 +96,22 @@ object IncomingCallNotifier {
             builder.addAction(Notification.Action.Builder(null, "接听", answerPendingIntent).build())
         }
 
+        Log.d("NogiRelay", "Showing incoming call notification for ${message.id}, isAppInForeground=${isAppInForeground(context)}")
         notificationManager.notify(notificationId(message.id), builder.build())
 
-        // Keep the PendingIntent for the system full-screen path and also try
-        // a direct launch. The latter covers foreground, locked, and OEM
-        // background cases where the notification is delivered but the
-        // system delays executing the full-screen PendingIntent.
-        val launchedDirectly = runCatching {
+        // Direct launch approach: if we have SYSTEM_ALERT_WINDOW, try direct start
+        runCatching {
             if (isAppInForeground(context)) {
+                Log.d("NogiRelay", "App in foreground, starting IncomingCallActivity directly")
                 context.startActivity(fullScreenIntent)
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                val options = ActivityOptions.makeBasic().apply {
-                    setPendingIntentCreatorBackgroundActivityStartMode(
-                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED,
-                    )
-                    setPendingIntentBackgroundActivityStartMode(
-                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED,
-                    )
-                }
-                fullScreenPendingIntent.send(context, 0, null, null, null, null, options.toBundle())
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(context)) {
+                Log.d("NogiRelay", "App in background but has overlay permission, starting IncomingCallActivity directly")
+                context.startActivity(fullScreenIntent)
             } else {
-                context.startActivity(fullScreenIntent)
+                Log.d("NogiRelay", "App in background, no overlay permission, relying on notification fullScreenIntent")
             }
-            true
         }.onFailure { error ->
-            Log.w("NogiRelay", "Call activity launch was blocked; keeping notification fallback", error)
-        }.getOrDefault(false)
-        if (!launchedDirectly) {
-            runCatching { fullScreenPendingIntent.send() }
-                .onFailure { error -> Log.w("NogiRelay", "PendingIntent call activity fallback was blocked", error) }
+            Log.w("NogiRelay", "Call activity launch failed", error)
         }
     }
 

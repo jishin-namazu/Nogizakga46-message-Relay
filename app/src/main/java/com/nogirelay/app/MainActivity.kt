@@ -21,6 +21,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -52,6 +53,7 @@ import androidx.compose.material.icons.rounded.Inbox
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -106,6 +108,7 @@ import androidx.core.content.ContextCompat
 import com.nogirelay.app.call.FullScreenPermission
 import com.nogirelay.app.call.IncomingCallActivity
 import com.nogirelay.app.call.IncomingCallNotifier
+import com.nogirelay.app.call.OverlayPermission
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.AppSettings
 import com.nogirelay.app.data.MessageType
@@ -118,6 +121,7 @@ import com.nogirelay.app.notification.NotificationChannels
 import com.nogirelay.app.push.PushRegistrar
 import com.nogirelay.app.translation.TranslationManager
 import com.nogirelay.app.translation.normalizeTranslationText
+import com.nogirelay.app.translation.substituteNickname
 import com.nogirelay.app.ui.MediaViewerActivity
 import com.nogirelay.app.ui.NogiRelayTheme
 import com.nogirelay.app.ui.RemoteImage
@@ -228,6 +232,7 @@ private fun RelayApp(
     var tab by remember { mutableStateOf(if (initialMessageId == null) AppTab.HOME else AppTab.MESSAGES) }
     var notificationGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
     var fullScreenGranted by remember { mutableStateOf(FullScreenPermission.canUse(context)) }
+    var overlayGranted by remember { mutableStateOf(OverlayPermission.canUse(context)) }
     var refreshKey by remember { mutableIntStateOf(0) }
     var syncing by remember { mutableStateOf(false) }
     var syncLabel by remember { mutableStateOf("") }
@@ -241,6 +246,7 @@ private fun RelayApp(
             delay(2_000)
             refreshKey++
             fullScreenGranted = FullScreenPermission.canUse(context)
+            overlayGranted = OverlayPermission.canUse(context)
             notificationGranted = hasNotificationPermission(context)
         }
     }
@@ -307,6 +313,7 @@ private fun RelayApp(
                 AppTab.HOME -> HomeScreen(
                     notificationGranted = notificationGranted,
                     fullScreenGranted = fullScreenGranted,
+                    overlayGranted = overlayGranted,
                     refreshKey = refreshKey,
                     onRequestNotifications = {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -315,6 +322,9 @@ private fun RelayApp(
                     },
                     onOpenFullScreenSettings = {
                         FullScreenPermission.settingsIntent(context)?.let(context::startActivity)
+                    },
+                    onOpenOverlaySettings = {
+                        context.startActivity(OverlayPermission.settingsIntent(context))
                     },
                     onTestCall = onTestCall,
                     onOpenSettings = { tab = AppTab.SETTINGS },
@@ -388,9 +398,11 @@ private fun formatMessageDateTime(value: String): String {
 private fun HomeScreen(
     notificationGranted: Boolean,
     fullScreenGranted: Boolean,
+    overlayGranted: Boolean,
     refreshKey: Int,
     onRequestNotifications: () -> Unit,
     onOpenFullScreenSettings: () -> Unit,
+    onOpenOverlaySettings: () -> Unit,
     onTestCall: () -> Unit,
     onOpenSettings: () -> Unit,
     isSyncing: Boolean,
@@ -405,6 +417,7 @@ private fun HomeScreen(
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp),
     ) {
         item {
             StatusBand(
@@ -426,6 +439,13 @@ private fun HomeScreen(
                 description = if (fullScreenGranted) "允许在锁屏上显示成员来电" else "Android 14 需要开启特殊权限",
                 granted = fullScreenGranted,
                 action = onOpenFullScreenSettings,
+            )
+            HorizontalDivider()
+            PermissionRow(
+                title = "后台弹出界面",
+                description = if (overlayGranted) "允许应用在后台直接弹出全屏来电" else "部分设备需要此权限才能弹出后台来电",
+                granted = overlayGranted,
+                action = onOpenOverlaySettings,
             )
             HorizontalDivider()
             PermissionRow(
@@ -526,8 +546,10 @@ private fun MessagesScreen(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val downloadScope = rememberCoroutineScope()
+    val retranslateScope = rememberCoroutineScope()
     val messages = remember(refreshKey) { AppGraph.database.latest() }
     val translationEnabled = remember(refreshKey) { AppGraph.settings.read().translationEnabled }
+    val userNickname = remember(refreshKey) { AppGraph.settings.read().userNickname }
     val playbackState by VoicePlaybackService.playbackState.collectAsState()
     var selectedMemberId by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
@@ -753,9 +775,16 @@ private fun MessagesScreen(
                             message = message,
                             audioState = playbackState.takeIf { it.messageId == message.id },
                             translationEnabled = translationEnabled,
+                            userNickname = userNickname,
                             onOpenMedia = { onOpenMedia(message) },
                             onPlayVoice = { onPlayVoice(message) },
                             onDownload = { download(message) },
+                            onRetranslate = {
+                                retranslateScope.launch {
+                                    AppGraph.database.markForRetranslation(message.id)
+                                    TranslationManager.enqueue(context)
+                                }
+                            },
                         )
                     }
                     item {
@@ -917,9 +946,11 @@ private fun MessageCard(
     message: RelayMessage,
     audioState: VoicePlaybackState?,
     translationEnabled: Boolean,
+    userNickname: String,
     onOpenMedia: () -> Unit,
     onPlayVoice: () -> Unit,
     onDownload: () -> Unit,
+    onRetranslate: () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var scrubPositionMs by remember(message.id) { mutableIntStateOf(0) }
@@ -957,8 +988,17 @@ private fun MessageCard(
                     Text(message.memberName, fontWeight = FontWeight.SemiBold)
                     Text(formatMessageDateTime(message.sentAt), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                if (translationEnabled && message.text?.isNotBlank() == true) {
+                    IconButton(onClick = onRetranslate, modifier = Modifier.size(40.dp)) {
+                        Icon(
+                            Icons.Rounded.Refresh,
+                            contentDescription = "重新翻译",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
                 if (message.type != MessageType.TEXT) {
-                    IconButton(onClick = onDownload) {
+                    IconButton(onClick = onDownload, modifier = Modifier.size(40.dp)) {
                         Icon(Icons.Rounded.Download, contentDescription = "保存到本地")
                     }
                 }
@@ -967,12 +1007,12 @@ private fun MessageCard(
             message.text?.takeIf { it.isNotBlank() }?.let {
                 Spacer(Modifier.height(12.dp))
                 SelectionContainer {
-                    Text(it)
+                    Text(substituteNickname(it, userNickname) ?: it)
                 }
             }
             if (translationEnabled) {
-                normalizeTranslationText(message.text, message.translation)?.let {
-                Spacer(Modifier.height(7.dp))
+                normalizeTranslationText(substituteNickname(message.text, userNickname), message.translation)?.let {
+                    Spacer(Modifier.height(7.dp))
                     SelectionContainer {
                         Text(
                             text = it,
@@ -1003,6 +1043,8 @@ private fun MessageCard(
                             modifier = Modifier.fillMaxWidth(),
                             contentScale = ContentScale.Fit,
                             preserveAspectRatio = true,
+                            messageType = message.type,
+                            message = message,
                         )
                         if (message.type == MessageType.VIDEO) {
                             Box(
@@ -1114,6 +1156,7 @@ private fun SettingsScreen() {
         mutableStateOf(listOf(initial.openAiModel.ifBlank { TranslationManager.DEFAULT_MODEL }))
     }
     var translationEnabled by remember { mutableStateOf(initial.translationEnabled) }
+    var userNickname by remember { mutableStateOf(initial.userNickname) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
     var modelFieldWidthPx by remember { mutableIntStateOf(0) }
     var savedLabel by remember { mutableStateOf("") }
@@ -1126,6 +1169,7 @@ private fun SettingsScreen() {
         openAiApiKey = openAiApiKey,
         openAiModel = openAiModel,
         translationEnabled = translationEnabled,
+        userNickname = userNickname,
     )
 
     fun saveTranslationSettings() {
@@ -1260,6 +1304,16 @@ private fun SettingsScreen() {
                     },
                 )
             }
+        }
+        item {
+            OutlinedTextField(
+                value = userNickname,
+                onValueChange = { userNickname = it },
+                label = { Text("你的称呼") },
+                placeholder = { Text("用于替换消息中的 %%%") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         item {
             OutlinedTextField(

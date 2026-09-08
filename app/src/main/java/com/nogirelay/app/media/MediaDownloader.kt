@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
@@ -38,7 +40,14 @@ object MediaDownloader {
     /** Downloads a message's media once and returns the private local file. */
     fun enqueueIfNeeded(context: Context, message: RelayMessage): File? {
         val mediaUrl = mediaUrlFor(message) ?: return null
-        return downloadUrl(context.applicationContext, mediaUrl, message.type)
+        val file = downloadUrl(context.applicationContext, mediaUrl, message.type)
+        
+        // 如果是视频，下载完成后生成高清缩略图
+        if (message.type == MessageType.VIDEO) {
+            generateVideoThumbnail(context.applicationContext, message)
+        }
+        
+        return file
     }
 
     /**
@@ -290,4 +299,68 @@ object MediaDownloader {
     private fun mediaUrlFor(message: RelayMessage): String? =
         message.mediaUrl?.takeIf { it.isNotBlank() }
             ?: if (message.type == MessageType.IMAGE) message.thumbnailUrl?.takeIf { it.isNotBlank() } else null
+
+    fun generateVideoThumbnail(context: Context, message: RelayMessage): File? {
+        if (message.type != MessageType.VIDEO) return null
+        val mediaUrl = message.mediaUrl ?: return null
+        
+        val thumbnailFile = videoThumbnailFile(context.applicationContext, mediaUrl)
+        if (thumbnailFile.exists() && thumbnailFile.length() > 0L) {
+            return thumbnailFile
+        }
+
+        val videoFile = cachedFileForUrl(context, mediaUrl, MessageType.VIDEO) ?: return null
+        
+        val lock = locks.computeIfAbsent("thumbnail:$mediaUrl") { Any() }
+        return try {
+            synchronized(lock) {
+                if (thumbnailFile.exists() && thumbnailFile.length() > 0L) {
+                    return@synchronized thumbnailFile
+                }
+                
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(videoFile.absolutePath)
+                    val frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        ?: return@synchronized null
+                    
+                    val parent = thumbnailFile.parentFile ?: return@synchronized null
+                    if (!parent.exists() && !parent.mkdirs()) return@synchronized null
+                    
+                    val temp = File(parent, "${thumbnailFile.name}.part-${System.nanoTime()}")
+                    try {
+                        FileOutputStream(temp).use { output ->
+                            frame.compress(Bitmap.CompressFormat.JPEG, 90, output)
+                            output.fd.sync()
+                        }
+                        replaceAtomically(temp, thumbnailFile)
+                        thumbnailFile
+                    } finally {
+                        if (temp.exists()) temp.delete()
+                        frame.recycle()
+                    }
+                } finally {
+                    retriever.release()
+                }
+            }
+        } catch (e: Exception) {
+            null
+        } finally {
+            locks.remove("thumbnail:$mediaUrl", lock)
+        }
+    }
+
+    fun videoThumbnailFile(context: Context, videoUrl: String): File {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(videoUrl.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
+        return File(File(context.filesDir, "video-thumbnails"), "$digest.jpg")
+    }
+
+    fun cachedVideoThumbnail(context: Context, message: RelayMessage): File? {
+        if (message.type != MessageType.VIDEO) return null
+        val mediaUrl = message.mediaUrl ?: return null
+        val file = videoThumbnailFile(context.applicationContext, mediaUrl)
+        return file.takeIf { it.exists() && it.length() > 0L }
+    }
 }

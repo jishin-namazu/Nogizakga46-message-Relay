@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Flutter ScreenUtil design values from the official call page (375 x 667). -->
+    <dimen name="nogi_call_bottom_bar_height">112dp</dimen>
+    <dimen name="nogi_call_horizontal_padding">24dp</dimen>
+    <dimen name="nogi_call_button_size">64dp</dimen>
+    <dimen name="nogi_call_button_margin">8dp</dimen>
+    <dimen name="nogi_call_answer_icon_size">31.66dp</dimen>
+    <dimen name="nogi_call_end_icon_size">35.56dp</dimen>
+    <dimen name="nogi_call_speaker_icon_size">35.51dp</dimen>
+    <dimen name="nogi_call_name_text_size">20sp</dimen>
+    <dimen name="nogi_call_status_text_size">12sp</dimen>
+    <dimen name="nogi_call_duration_text_size">11sp</dimen>
+    <dimen name="nogi_call_name_status_spacing">16dp</dimen>
+</resources>

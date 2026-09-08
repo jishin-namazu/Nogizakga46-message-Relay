@@ -211,6 +211,14 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         writableDatabase.update("messages", values, "id = ?", arrayOf(id))
     }
 
+    fun markForRetranslation(id: String) {
+        val values = ContentValues().apply {
+            put("translation", null as String?)
+            put("translation_done", 0)
+        }
+        writableDatabase.update("messages", values, "id = ?", arrayOf(id))
+    }
+
     private fun memberFilter(memberKey: String, searchQuery: String): QueryFilter {
         val clauses = mutableListOf(
             "id NOT GLOB ?",

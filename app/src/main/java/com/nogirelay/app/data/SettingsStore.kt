@@ -11,6 +11,7 @@ class SettingsStore(context: Context) {
         openAiApiKey = prefs.getString(KEY_OPENAI_API_KEY, "").orEmpty(),
         openAiModel = prefs.getString(KEY_OPENAI_MODEL, "gpt-4o-mini").orEmpty(),
         translationEnabled = prefs.getBoolean(KEY_TRANSLATION_ENABLED, false),
+        userNickname = prefs.getString(KEY_USER_NICKNAME, "").orEmpty(),
     )
 
     fun save(settings: AppSettings) {
@@ -20,6 +21,7 @@ class SettingsStore(context: Context) {
             .putString(KEY_OPENAI_API_KEY, settings.openAiApiKey.trim())
             .putString(KEY_OPENAI_MODEL, settings.openAiModel.trim())
             .putBoolean(KEY_TRANSLATION_ENABLED, settings.translationEnabled)
+            .putString(KEY_USER_NICKNAME, settings.userNickname.trim())
             .apply()
     }
 
@@ -36,6 +38,7 @@ class SettingsStore(context: Context) {
         private const val KEY_OPENAI_API_KEY = "openai_api_key"
         private const val KEY_OPENAI_MODEL = "openai_model"
         private const val KEY_TRANSLATION_ENABLED = "translation_enabled"
+        private const val KEY_USER_NICKNAME = "user_nickname"
         private const val KEY_PUSH_TOKEN = "push_token"
     }
 }

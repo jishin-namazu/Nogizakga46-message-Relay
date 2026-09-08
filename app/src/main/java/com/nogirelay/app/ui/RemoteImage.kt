@@ -21,7 +21,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import com.nogirelay.app.data.MessageType
+import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -49,25 +51,32 @@ fun RemoteImage(
     contentScale: ContentScale = ContentScale.Crop,
     loadCachedImmediately: Boolean = false,
     preserveAspectRatio: Boolean = false,
+    messageType: MessageType = MessageType.IMAGE,
+    message: RelayMessage? = null,
+    placeholderResId: Int? = null,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var bitmap by remember(url) {
         mutableStateOf(
             url?.let { value ->
                 RemoteImageMemoryCache.get(value)
-                    ?: if (loadCachedImmediately) loadCachedBitmap(context, value) else null
+                    ?: if (loadCachedImmediately) loadCachedBitmap(context, value, messageType, message) else null
             },
         )
     }
     LaunchedEffect(url) {
         if (bitmap == null) {
             bitmap = url?.let { value ->
-                loadBitmap(context, value)?.also { loaded -> RemoteImageMemoryCache.put(value, loaded) }
+                loadBitmap(context, value, messageType, message)?.also { loaded -> RemoteImageMemoryCache.put(value, loaded) }
             }
         }
     }
 
-    Box(modifier.background(Color(0xFFE7E2EA))) {
+    Box(
+        modifier.background(
+            if (bitmap == null && placeholderResId != null) Color.Transparent else Color(0xFFE7E2EA),
+        ),
+    ) {
         val image = bitmap
         if (image != null) {
             val imageModifier = if (preserveAspectRatio && image.height > 0) {
@@ -83,16 +92,29 @@ fun RemoteImage(
                 contentScale = contentScale,
                 modifier = imageModifier,
             )
+        } else if (placeholderResId != null) {
+            Image(
+                painter = painterResource(placeholderResId),
+                contentDescription = contentDescription,
+                contentScale = contentScale,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }
 
-private fun loadCachedBitmap(context: Context, url: String): Bitmap? = runCatching {
+private fun loadCachedBitmap(context: Context, url: String, messageType: MessageType = MessageType.IMAGE, message: RelayMessage? = null): Bitmap? = runCatching {
+    if (messageType == MessageType.VIDEO && message != null) {
+        MediaDownloader.cachedVideoThumbnail(context, message)
+            ?.let { BitmapFactory.decodeFile(it.absolutePath) }
+            ?.also { RemoteImageMemoryCache.put(url, it); return@runCatching it }
+    }
+    
     val uri = Uri.parse(url)
     val bitmap = if (uri.scheme in setOf("android.resource", "content", "file")) {
         context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
     } else if (uri.scheme == "https") {
-        MediaDownloader.cachedFileForUrl(context, url, MessageType.IMAGE)
+        MediaDownloader.cachedFileForUrl(context, url, messageType)
             ?.let { BitmapFactory.decodeFile(it.absolutePath) }
     } else {
         null
@@ -100,14 +122,20 @@ private fun loadCachedBitmap(context: Context, url: String): Bitmap? = runCatchi
     bitmap?.also { RemoteImageMemoryCache.put(url, it) }
 }.getOrNull()
 
-private suspend fun loadBitmap(context: Context, url: String): Bitmap? = withContext(Dispatchers.IO) {
+private suspend fun loadBitmap(context: Context, url: String, messageType: MessageType = MessageType.IMAGE, message: RelayMessage? = null): Bitmap? = withContext(Dispatchers.IO) {
     runCatching {
+        if (messageType == MessageType.VIDEO && message != null) {
+            MediaDownloader.cachedVideoThumbnail(context, message)
+                ?.let { BitmapFactory.decodeFile(it.absolutePath) }
+                ?.let { return@withContext it }
+        }
+        
         val uri = Uri.parse(url)
         if (uri.scheme in setOf("android.resource", "content", "file")) {
             context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
         } else if (uri.scheme == "https") {
-            val cached = MediaDownloader.cachedFileForUrl(context, url, MessageType.IMAGE)
-            val file = cached ?: MediaDownloader.downloadUrl(context, url, MessageType.IMAGE)
+            val cached = MediaDownloader.cachedFileForUrl(context, url, messageType)
+            val file = cached ?: MediaDownloader.downloadUrl(context, url, messageType)
             BitmapFactory.decodeFile(file.absolutePath)
         } else {
             null

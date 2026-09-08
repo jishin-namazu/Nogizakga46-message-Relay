@@ -6,4 +6,5 @@ data class AppSettings(
     val openAiApiKey: String = "",
     val openAiModel: String = "gpt-4o-mini",
     val translationEnabled: Boolean = false,
+    val userNickname: String = "",
 )
