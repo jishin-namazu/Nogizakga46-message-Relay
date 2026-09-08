@@ -9,7 +9,7 @@ class SettingsStore(context: Context) {
         relayUrl = prefs.getString(KEY_RELAY_URL, "").orEmpty(),
         accessToken = prefs.getString(KEY_TOKEN, "").orEmpty(),
         openAiApiKey = prefs.getString(KEY_OPENAI_API_KEY, "").orEmpty(),
-        openAiModel = prefs.getString(KEY_OPENAI_MODEL, "gpt-4o-mini").orEmpty(),
+        openAiModel = prefs.getString(KEY_OPENAI_MODEL, "").orEmpty(),
         translationEnabled = prefs.getBoolean(KEY_TRANSLATION_ENABLED, false),
         userNickname = prefs.getString(KEY_USER_NICKNAME, "").orEmpty(),
     )

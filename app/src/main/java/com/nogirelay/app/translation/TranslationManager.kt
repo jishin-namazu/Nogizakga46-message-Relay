@@ -20,9 +20,8 @@ import java.util.concurrent.ConcurrentHashMap
 /** Queues one local translation attempt per message when the feature is enabled. */
 object TranslationManager {
     private const val TAG = "NogiTranslation"
-    private const val ENDPOINT = "https://api.openai.com/v1/responses"
+    private const val ENDPOINT = "https://api.openai.com/v1/chat/completions"
     private const val MODELS_ENDPOINT = "https://api.openai.com/v1/models"
-    const val DEFAULT_MODEL = "gpt-4o-mini"
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val READ_TIMEOUT_MS = 60_000
 
@@ -35,8 +34,8 @@ object TranslationManager {
     fun enqueue(context: Context) {
         AppGraph.initialize(context)
         val settings = AppGraph.settings.read()
-        if (!settings.translationEnabled || settings.openAiApiKey.isBlank()) return
-        val model = settings.openAiModel.trim().takeIf { it.isNotEmpty() } ?: DEFAULT_MODEL
+        if (!settings.translationEnabled || settings.openAiApiKey.isBlank() || settings.openAiModel.isBlank()) return
+        val model = settings.openAiModel.trim()
         val nickname = settings.userNickname
 
         val pending = runCatching { AppGraph.database.pendingTranslations() }.getOrNull() ?: return
@@ -158,7 +157,7 @@ object TranslationManager {
     }
 
     private fun modelSortRank(id: String): Int = when {
-        id == DEFAULT_MODEL -> 0
+        id == "gpt-4o-mini" -> 0
         id == "gpt-4.1-mini" -> 1
         id == "gpt-4.1" -> 2
         id == "gpt-4o" -> 3
