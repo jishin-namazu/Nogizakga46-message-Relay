@@ -390,9 +390,13 @@ private fun syncMessagesFromServer(context: Context): Int {
     var offset = 0
     var inserted = 0
     var pageCount = 0
-    while (pageCount++ < 50) {
+    while (true) {
         val page = AppGraph.relayClient.fetchMessages(settings, limit = 200, offset = offset)
         if (page.isEmpty()) break
+        
+        pageCount++
+        Log.d("NogiRelay", "Syncing page $pageCount: ${page.size} messages, offset=$offset")
+        
         page.forEach { message ->
             if (AppGraph.database.insert(message)) inserted++
             if (message.type != MessageType.TEXT) {
@@ -403,6 +407,7 @@ private fun syncMessagesFromServer(context: Context): Int {
         offset += page.size
         if (page.size < 200) break
     }
+    Log.d("NogiRelay", "Sync complete: $pageCount pages, $inserted new messages")
     TranslationManager.enqueue(context)
     return inserted
 }
