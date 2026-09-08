@@ -68,7 +68,7 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
 [[mounts]]
   source = "nogi_media"
   destination = "/data"
-  processes = ["monitor"]
+  processes = ["app", "monitor"]  # 两个进程都需要访问 /data
 
 # 主 API 服务
 [[services]]
