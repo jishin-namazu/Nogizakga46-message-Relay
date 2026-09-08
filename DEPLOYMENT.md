@@ -15,10 +15,6 @@
 | `FIREBASE_PROJECT_ID` | Firebase 项目 ID |
 | `FIREBASE_PRIVATE_KEY_BASE64` | Base64 编码的 Firebase Admin JSON |
 
-**监控模式配置:**
-- `NOGI_MONITOR_MODE=browser` - 生产环境使用浏览器模式(推荐)
-- `NOGI_BROWSER_STATE_FILE=/data/nogi-browser-state.json` - 浏览器会话文件路径
-
 完整的环境变量列表和说明请查看 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
 ## 2. Fly.io 部署

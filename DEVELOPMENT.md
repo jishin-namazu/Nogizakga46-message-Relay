@@ -252,35 +252,19 @@ npm run bootstrap:browser
 
 ### 启动监控
 
-按 `.env` 的 `NOGI_MONITOR_MODE` 启动：
-
 ```powershell
 npm run monitor
 ```
 
-也可以明确选择：
-
-```powershell
-npm run monitor:browser
-npm run monitor:direct
-```
-
-浏览器模式通过统一入口 `npm run monitor` 启动时，还会同时启动 8081 端口的受保护媒体服务。
+monitor 进程会同时启动 8081 端口的受保护媒体服务。
 
 ### 官网访问令牌自动续期
 
-**浏览器模式 (browser):**
-- 默认每 30 分钟重新加载官网页面以维护会话活跃状态
-- 页面中的 TokenManager 自动管理短期访问令牌和刷新令牌
-- 当访问令牌即将过期(5分钟内)时自动使用刷新令牌续期
-- 刷新令牌由官网页面维护,monitor 只观察短期访问令牌
-- 配置项: `NOGI_BROWSER_SESSION_REFRESH_INTERVAL_MINUTES` (默认 30)
+monitor 默认每 30 分钟重新加载官网页面以维护会话活跃状态。页面中的 TokenManager 自动管理短期访问令牌和刷新令牌。当访问令牌即将过期(5分钟内)时,会自动使用刷新令牌续期。
 
-**直连模式 (direct):**
-- 使用持久化的刷新令牌自动续期访问令牌
-- 当访问令牌过期或距上次刷新超过设定间隔时触发续期
-- 刷新令牌存储在 `NOGI_ACCESS_TOKEN_STATE_FILE` (权限 0600)
-- 配置项: `NOGI_TOKEN_REFRESH_INTERVAL_MINUTES` (默认 30)
+**配置项:**
+- `NOGI_BROWSER_SESSION_REFRESH_INTERVAL_MINUTES`: 页面刷新间隔(默认 30 分钟)
+- `NOGI_BROWSER_RESTART_INTERVAL_SECONDS`: 浏览器进程重启间隔(默认 1800 秒)
 
 **会话失效信号:**
 - 日志中出现 `Nogi API 401: Unauthorized`

@@ -3,13 +3,10 @@ import { recordError } from '../services/error-log.js';
 
 dotenv.config();
 
-const browserMode = process.env.NOGI_MONITOR_MODE === 'browser';
-const monitor = browserMode
-  ? (await import('./nogi-browser.js')).default
-  : (await import('./nogi-web.js')).default;
-const mediaServer = browserMode ? (await import('./media-server.js')).default : null;
+const monitor = (await import('./nogi-browser.js')).default;
+const mediaServer = (await import('./media-server.js')).default;
 
-if (mediaServer) await mediaServer.start();
+await mediaServer.start();
 
 monitor.start().catch(error => {
   void recordError('monitor.start', error);
@@ -25,7 +22,7 @@ process.on('unhandledRejection', reason => {
 
 const shutdown = async () => {
   await monitor.stop();
-  await mediaServer?.stop();
+  await mediaServer.stop();
   process.exit(0);
 };
 process.on('SIGINT', shutdown);
