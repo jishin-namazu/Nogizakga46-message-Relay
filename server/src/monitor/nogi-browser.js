@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import fs from 'node:fs/promises';
+import { watch } from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import messageService from '../services/message.js';
@@ -139,6 +140,9 @@ class NogiBrowserMonitor {
     this.hasCompletedInitialPoll = false;
     this.groupMessageIds = new Map();
     this.groups = new Map();
+    this.sessionFileWatcher = null;
+    this.sessionFileLastMtime = 0;
+    this.isReloadingSession = false;
   }
 
   normalizeMessage(rawMessage, group) {
@@ -195,6 +199,7 @@ class NogiBrowserMonitor {
 
     try {
       await this.openBrowser();
+      this.startSessionFileWatcher();
     } catch (error) {
       await this.closeBrowser();
       throw error;
@@ -229,6 +234,7 @@ class NogiBrowserMonitor {
 
   async stop() {
     this.isRunning = false;
+    this.stopSessionFileWatcher();
     if (this.loopPromise) await this.loopPromise;
     await this.closeBrowser();
   }
@@ -591,6 +597,87 @@ class NogiBrowserMonitor {
 
     this.statePersistPromise = this.statePersistPromise.then(persist, persist);
     return this.statePersistPromise;
+  }
+
+  startSessionFileWatcher() {
+    if (this.sessionFileWatcher) return;
+
+    this.sessionFileWatcher = watch(this.storageStateFile, { persistent: false })
+      .on('change', async (eventType) => {
+        if (eventType !== 'change') return;
+        try {
+          const stats = await fs.stat(this.storageStateFile);
+          if (stats.mtimeMs <= this.sessionFileLastMtime) return;
+          this.sessionFileLastMtime = stats.mtimeMs;
+          console.log(`检测到会话文件更新,准备重载浏览器上下文...`);
+          await this.reloadSession();
+        } catch (error) {
+          if (error.code !== 'ENOENT') {
+            console.warn('检查会话文件失败:', error.message);
+          }
+        }
+      })
+      .on('error', (error) => {
+        console.warn('会话文件监听器错误:', error.message);
+        this.sessionFileWatcher = null;
+      });
+
+    console.log(`开始监听会话文件: ${this.storageStateFile}`);
+  }
+
+  stopSessionFileWatcher() {
+    if (this.sessionFileWatcher) {
+      this.sessionFileWatcher.close();
+      this.sessionFileWatcher = null;
+      console.log('停止监听会话文件');
+    }
+  }
+
+  async reloadSession() {
+    if (this.isReloadingSession) {
+      console.log('会话重载已在进行中,跳过');
+      return;
+    }
+
+    this.isReloadingSession = true;
+    try {
+      console.log('开始重载浏览器会话...');
+      const newStorageState = await this.loadStorageState();
+      
+      if (!newStorageState) {
+        console.warn('无法加载新会话文件,保持当前会话');
+        return;
+      }
+
+      await this.context?.close().catch(() => {});
+      
+      this.context = await this.browser.newContext({ storageState: newStorageState });
+      this.page = this.context.pages()[0] || await this.context.newPage();
+
+      this.page.on('request', request => this.observeRequest(request));
+      this.page.on('response', response => this.observeResponse(response));
+      
+      if (this.blockPageMedia) {
+        await this.page.route('**/*', route => {
+          const resourceType = route.request().resourceType();
+          if (['image', 'media', 'font'].includes(resourceType)) {
+            return route.abort().catch(() => {});
+          }
+          return route.continue().catch(() => {});
+        });
+      }
+
+      this.accessToken = '';
+      this.observedTokenAt = 0;
+      this.lastFrontendNavigationAt = 0;
+
+      console.log('✓ 浏览器会话重载成功');
+    } catch (error) {
+      console.error('重载会话失败:', error.message);
+      await recordError('monitor.reload_session', error);
+    } finally {
+      this.isReloadingSession = false;
+    }
   }
 }
 

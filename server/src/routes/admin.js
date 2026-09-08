@@ -56,7 +56,7 @@ router.post('/browser-session', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Browser session uploaded successfully. Restart monitor process to apply changes.',
+      message: 'Browser session uploaded successfully. Monitor will reload automatically.',
       path: stateFilePath,
       timestamp: new Date().toISOString(),
     });
