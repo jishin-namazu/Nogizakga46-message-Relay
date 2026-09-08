@@ -14,13 +14,19 @@ const executablePath = process.env.NOGI_BROWSER_EXECUTABLE_PATH
   || (process.platform === 'win32' ? 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe' : undefined);
 const apiOrigin = new URL(process.env.NOGI_API_URL || 'https://api.message.nogizaka46.com').origin;
 
-const state = await loadState(stateFile);
+// 清除旧会话,强制用户重新登录
+if (await fileExists(stateFile)) {
+  console.log('检测到旧的浏览器会话文件,将清除以确保重新登录...');
+  await fs.unlink(stateFile).catch(() => {});
+}
+
 const browser = await chromium.launch({
   headless: false,
   executablePath,
   args: ['--no-sandbox'],
 });
-const context = await browser.newContext(state ? { storageState: state } : {});
+// 始终使用空白上下文,不加载旧会话
+const context = await browser.newContext();
 let authorizationObserved = false;
 context.on('request', request => {
   try {
@@ -57,11 +63,11 @@ try {
   await browser.close().catch(() => {});
 }
 
-async function loadState(filePath) {
+async function fileExists(filePath) {
   try {
-    return JSON.parse(await fs.readFile(filePath, 'utf8'));
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    return null;
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
   }
 }

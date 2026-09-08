@@ -74,7 +74,9 @@ npm ci
 npm run bootstrap:browser
 ```
 
-在官网窗口完成登录并确认能看到消息，回到终端按回车。生成的 state 文件包含 cookies、localStorage 和 IndexedDB，必须视为密码处理。
+**重要**: `bootstrap:browser` 每次运行都会清除旧的会话文件,强制用户重新登录。这确保了会话的新鲜度和安全性。在官网窗口完成登录并确认能看到消息后,回到终端按回车保存新会话。
+
+生成的 state 文件包含 cookies、localStorage 和 IndexedDB，必须视为密码处理。
 
 查询 monitor 机器 ID 并上传：
 
@@ -185,7 +187,7 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
 
 **方式 1: 使用 API 上传(推荐,无需重新部署):**
 
-1. 在本地生成新的会话文件:
+1. 在本地生成新的会话文件(会自动清除旧会话):
    ```powershell
    Set-Location .\server
    $env:NOGI_BROWSER_EXECUTABLE_PATH = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
@@ -193,7 +195,7 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
    npm run bootstrap:browser
    ```
 
-2. 在官网窗口完成登录,确认能看到消息后按回车
+2. 在打开的浏览器窗口中完成登录,确认能看到消息后按回车保存新会话
 
 3. 使用上传脚本:
    ```powershell
