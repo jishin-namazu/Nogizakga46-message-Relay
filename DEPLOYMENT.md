@@ -249,6 +249,126 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
 
 不要只解析 JWT 的 `exp` 判断官网会话，真实 API 请求成功才是最终判断。
 
+### 3.4 官网会话过期处理
+
+**判断会话过期的信号:**
+
+1. **日志中出现 401 错误:**
+   ```text
+   Nogi API 401: Unauthorized
+   Error fetching member timeline
+   ```
+
+2. **monitor 停止获取新消息:**
+   - 日志中 `fetched=0` 持续出现
+   - 或完全没有轮询日志输出
+
+3. **浏览器状态文件失效:**
+   - 日志显示浏览器反复重启
+   - 页面没有带 Authorization 的请求
+
+**重新上传会话的步骤:**
+
+1. 在本地生成新的会话文件:
+   ```powershell
+   Set-Location .\server
+   $env:NOGI_BROWSER_EXECUTABLE_PATH = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+   $env:NOGI_BROWSER_STATE_FILE = '.\nogi-browser-state.json'
+   npm run bootstrap:browser
+   ```
+
+2. 在官网窗口完成登录,确认能看到消息后按回车
+
+3. 上传到 monitor 机器:
+   ```powershell
+   Set-Location ..
+   flyctl status -a nogi-relay
+   flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.json -a nogi-relay --machine MONITOR_MACHINE_ID --mode 0600
+   ```
+
+4. 重启 monitor 机器使会话生效:
+   ```powershell
+   flyctl machine restart MONITOR_MACHINE_ID -a nogi-relay
+   ```
+
+5. 观察日志确认恢复正常:
+   ```powershell
+   flyctl logs --app nogi-relay --no-tail
+   ```
+
+**安全注意事项:**
+- 会话文件包含完整登录凭证,必须妥善保管
+- 不要提交到 Git 或分享给他人
+- 定期轮换会话文件(建议每月至少一次)
+
+### 3.5 获取服务器媒体文件
+
+**API 端点:**
+```
+GET /v1/messages/:id/media/:kind
+Authorization: Bearer YOUR_ACCESS_TOKEN
+```
+
+**kind 参数说明:**
+- `media`: 原始图片、语音或视频文件
+- `thumbnail`: 图片或视频的缩略图
+- `phone_image`: 语音来电的背景图片
+
+**获取语音文件示例:**
+```powershell
+$token = Read-Host 'ACCESS_TOKEN'
+$messageId = 'abc123'
+Invoke-WebRequest `
+  -Uri "https://nogi-relay.fly.dev/v1/messages/$messageId/media/media" `
+  -Headers @{ Authorization = "Bearer $token" } `
+  -OutFile "voice_$messageId.wav"
+```
+
+**获取来电背景图示例:**
+```powershell
+$token = Read-Host 'ACCESS_TOKEN'
+$messageId = 'abc123'
+Invoke-WebRequest `
+  -Uri "https://nogi-relay.fly.dev/v1/messages/$messageId/media/phone_image" `
+  -Headers @{ Authorization = "Bearer $token" } `
+  -OutFile "phone_image_$messageId.jpg"
+```
+
+**批量下载消息媒体:**
+```powershell
+$token = Read-Host 'ACCESS_TOKEN'
+$messages = Invoke-RestMethod `
+  -Uri 'https://nogi-relay.fly.dev/v1/messages?limit=100&type=audio' `
+  -Headers @{ Authorization = "Bearer $token" }
+
+foreach ($msg in $messages) {
+  $id = $msg.id
+  try {
+    Invoke-WebRequest `
+      -Uri "https://nogi-relay.fly.dev/v1/messages/$id/media/media" `
+      -Headers @{ Authorization = "Bearer $token" } `
+      -OutFile "downloads/$id.wav"
+    Write-Host "Downloaded: $id"
+  } catch {
+    Write-Warning "Failed: $id - $_"
+  }
+}
+```
+
+**响应说明:**
+- 成功: HTTP 200,返回文件二进制流,Content-Type 根据文件类型设置
+- 未找到: HTTP 404,消息 ID 不存在或该消息没有对应的媒体类型
+- 未授权: HTTP 401,Bearer Token 缺失或无效
+- 媒体未就绪: HTTP 404,monitor 还未下载归档该媒体文件
+
+**存储位置:**
+所有媒体文件存储在 monitor 机器的 `/data/nogi-media/<消息ID>/` 目录:
+```text
+/data/nogi-media/abc123/
+  ├── media.wav           # 原始语音文件
+  └── phone_image.jpg     # 来电背景图
+```
+
 ## 4. 推送验收
 
 ### 4.1 普通消息
