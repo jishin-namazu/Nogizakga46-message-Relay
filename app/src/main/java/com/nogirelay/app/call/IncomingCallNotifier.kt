@@ -16,6 +16,7 @@ import com.nogirelay.app.MainActivity
 import com.nogirelay.app.R
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.notification.NotificationChannels
+import com.nogirelay.app.translation.NicknameSubstitution
 
 object IncomingCallNotifier {
     const val EXTRA_MESSAGE_ID = "message_id"
@@ -72,9 +73,10 @@ object IncomingCallNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+        val displayName = NicknameSubstitution.substitute(message.incomingCallFrom ?: message.memberName)
         val builder = Notification.Builder(context, NotificationChannels.CALLS)
             .setSmallIcon(R.drawable.ic_notification_call)
-            .setContentTitle(message.incomingCallFrom ?: message.memberName)
+            .setContentTitle(displayName)
             .setContentText("乃木坂46メッセージから着信中")
             .setCategory(Notification.CATEGORY_CALL)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
@@ -86,7 +88,7 @@ object IncomingCallNotifier {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val person = Person.Builder()
-                .setName(message.incomingCallFrom ?: message.memberName)
+                .setName(displayName)
                 .setImportant(true)
                 .setIcon(Icon.createWithResource(context, R.drawable.ic_person))
                 .build()
@@ -126,9 +128,10 @@ object IncomingCallNotifier {
             retryIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val displayName = NicknameSubstitution.substitute(message.incomingCallFrom ?: message.memberName)
         val notification = Notification.Builder(context, NotificationChannels.CALLS)
             .setSmallIcon(R.drawable.ic_notification_call)
-            .setContentTitle(message.incomingCallFrom ?: message.memberName)
+            .setContentTitle(displayName)
             .setContentText(reason)
             .setCategory(Notification.CATEGORY_CALL)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
@@ -156,9 +159,10 @@ object IncomingCallNotifier {
             com.nogirelay.app.data.MessageType.VIDEO -> "发来了一段视频"
             com.nogirelay.app.data.MessageType.TEXT -> message.text.orEmpty()
         }
+        val displayName = NicknameSubstitution.substitute(message.memberName)
         val notification = Notification.Builder(context, NotificationChannels.MESSAGES)
             .setSmallIcon(R.drawable.ic_notification_message)
-            .setContentTitle(message.memberName)
+            .setContentTitle(displayName)
             .setContentText(label)
             .setStyle(Notification.BigTextStyle().bigText(label))
             .setCategory(Notification.CATEGORY_MESSAGE)
