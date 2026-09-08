@@ -1275,7 +1275,7 @@ private fun SettingsScreen() {
     var aiProvider by remember { mutableStateOf(initial.aiProvider) }
     var aiApiKey by remember { mutableStateOf(initial.aiApiKey) }
     var aiModel by remember { mutableStateOf(initial.aiModel) }
-    var modelOptions by remember { mutableStateOf(emptyList<AIModel>()) }
+    var modelOptions by remember { mutableStateOf(initial.cachedAiModels) }
     var translationEnabled by remember { mutableStateOf(initial.translationEnabled) }
     var userNickname by remember { mutableStateOf(initial.userNickname) }
     var providerMenuExpanded by remember { mutableStateOf(false) }
@@ -1292,6 +1292,7 @@ private fun SettingsScreen() {
         aiProvider = aiProvider,
         aiApiKey = aiApiKey,
         aiModel = aiModel,
+        cachedAiModels = modelOptions,
         translationEnabled = translationEnabled,
         userNickname = userNickname,
     )
@@ -1316,6 +1317,10 @@ private fun SettingsScreen() {
             validatingApiKey = false
             result.onSuccess { models ->
                 modelOptions = models
+                if (aiModel.isNotBlank() && models.none { it.id == aiModel }) {
+                    aiModel = ""
+                }
+                AppGraph.settings.save(currentSettings().copy(cachedAiModels = models))
                 modelStatus = "API Key 有效，已加载 ${models.size} 个可用模型"
             }.onFailure { error ->
                 modelStatus = error.message ?: "API Key 无效或模型加载失败"
@@ -1441,6 +1446,7 @@ private fun SettingsScreen() {
                                 aiApiKey = ""
                                 aiModel = ""
                                 modelOptions = emptyList()
+                                AppGraph.settings.save(currentSettings().copy(cachedAiModels = emptyList()))
                                 modelStatus = ""
                                 providerMenuExpanded = false
                             },
