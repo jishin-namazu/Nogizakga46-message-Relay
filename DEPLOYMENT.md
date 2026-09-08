@@ -96,25 +96,14 @@ Invoke-RestMethod 'https://nogi-relay.fly.dev/health'
 flyctl logs --app nogi-relay --no-tail
 ```
 
-发布完成前不要删除旧机器或持久卷。需要回滚时先列出历史版本，再选择已验证的镜像版本：
+需要回滚时先列出历史版本，再选择已验证的镜像版本：
 
 ```powershell
 flyctl releases --app nogi-relay
 flyctl deploy --app nogi-relay --image registry.fly.io/nogi-relay:IMAGE_TAG
 ```
 
-### 2.6 清理停止的机器
-
-停止的机器不一定是故障，也可能是发布留下的旧副本。删除前先确认它没有持久卷、不是唯一的 `app` 实例，并保留正在运行的 `monitor`：
-
-```powershell
-flyctl machine list -a nogi-relay
-flyctl machine destroy MACHINE_ID -a nogi-relay
-```
-
-只有满足以下条件才清理：状态为 `stopped`、`VOLUME` 为空、同一进程组至少还有一台 `started` 机器。不要删除挂载 `/data` 的 monitor 机器，也不要把数据库机器的清理命令用于 `nogi-relay`。
-
-### 2.7 媒体卷
+### 2.6 媒体卷
 
 正式图片、语音、视频、缩略图和来电背景存储在 `/data/nogi-media/<消息ID>/`：
 
