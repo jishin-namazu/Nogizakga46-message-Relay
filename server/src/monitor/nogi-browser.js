@@ -140,6 +140,8 @@ class NogiBrowserMonitor {
     this.sessionFileWatcher = null;
     this.sessionFileLastMtime = 0;
     this.isReloadingSession = false;
+    this.consecutiveAuthFailures = 0;
+    this.maxConsecutiveAuthFailures = 10;
   }
 
   normalizeMessage(rawMessage, group) {
@@ -215,12 +217,42 @@ class NogiBrowserMonitor {
           if (this.shouldRestartBrowser()) await this.restartBrowser();
           if (this.shouldRefreshFrontendSession()) await this.refreshFrontendSession();
           await this.poll();
-      } catch (error) {
+          this.consecutiveAuthFailures = 0;
+        } catch (error) {
+          const isAuthError = error.message?.includes('官网页面没有发出带 Authorization 的 API 请求')
+            || error.message?.includes('官网页面尚未提供访问令牌')
+            || error.message?.includes('Nogi API 401');
+          
           await recordError('monitor.poll', error, {
             mode: 'browser',
             has_access_token: Boolean(this.accessToken),
             browser_started_at: this.browserStartedAt || null,
+            is_auth_error: isAuthError,
+            consecutive_failures: this.consecutiveAuthFailures,
           });
+
+          if (isAuthError) {
+            this.consecutiveAuthFailures++;
+            
+            if (this.consecutiveAuthFailures >= this.maxConsecutiveAuthFailures) {
+              console.error('╔═════════════════════════════════════════════════════════════════╗');
+              console.error('║  ⚠️  会话已过期且连续失败 ' + this.consecutiveAuthFailures + ' 次                             ║');
+              console.error('║  请立即上传新的浏览器会话文件以恢复监控功能                 ║');
+              console.error('║  使用命令: node upload-session.js <session-file> <url> <token> ║');
+              console.error('║  监控已暂停，等待新会话文件...                              ║');
+              console.error('╚═════════════════════════════════════════════════════════════════╝');
+              this.accessToken = '';
+              this.observedTokenAt = 0;
+              await sleep(5 * 60_000);
+              continue;
+            }
+            
+            console.error(`会话过期或认证失败 (第 ${this.consecutiveAuthFailures}/${this.maxConsecutiveAuthFailures} 次),等待新的会话文件上传。`);
+            this.accessToken = '';
+            this.observedTokenAt = 0;
+            await sleep(Math.max(60_000, this.pollIntervalMs));
+            continue;
+          }
         }
         if (this.isRunning) await sleep(this.pollIntervalMs);
       }
@@ -387,6 +419,7 @@ class NogiBrowserMonitor {
       this.accessToken = '';
       this.observedTokenAt = 0;
       try {
+        console.log('正在刷新前端会话...');
         // Flutter keeps long-lived resources open, so waiting for
         // `domcontentloaded` can stall the worker indefinitely. `commit` is
         // enough to start the app; the bounded settle period below lets its
@@ -400,7 +433,9 @@ class NogiBrowserMonitor {
         }
         await this.persistStorageState();
         await this.persistAccessToken();
+        console.log('前端会话刷新成功');
       } catch (error) {
+        console.error('前端会话刷新失败:', error.message);
         this.accessToken = previousToken;
         this.observedTokenAt = previousObservedTokenAt;
         throw error;
@@ -437,8 +472,14 @@ class NogiBrowserMonitor {
     }
 
     if (response.status === 401 && retryAuth) {
-      await this.refreshFrontendSession();
-      return this.apiRequest(pathname, { retryAuth: false });
+      try {
+        await this.refreshFrontendSession();
+        return this.apiRequest(pathname, { retryAuth: false });
+      } catch (refreshError) {
+        console.error('会话刷新失败:', refreshError.message);
+        const detail = '会话已过期,无法刷新。请上传新的浏览器会话文件。';
+        throw new Error(`Nogi API ${response.status} ${pathname}: ${detail}`);
+      }
     }
 
     const responseText = await response.text();
@@ -681,11 +722,14 @@ class NogiBrowserMonitor {
       this.observedTokenAt = 0;
       this.lastFrontendNavigationAt = 0;
       this.browserStartedAt = 0;
+      this.lastPersistedAccessToken = '';
+      this.refreshPromise = null;
+      this.consecutiveAuthFailures = 0;
 
       console.log('使用新会话重新打开浏览器...');
       await this.openBrowser();
       
-      console.log('✓ 浏览器会话重载成功,下次轮询将使用新会话');
+      console.log('✓ 浏览器会话重载成功,监控将在下次轮询时使用新会话');
     } catch (error) {
       console.error('重载会话失败:', error.message);
       await recordError('monitor.reload_session', error);
