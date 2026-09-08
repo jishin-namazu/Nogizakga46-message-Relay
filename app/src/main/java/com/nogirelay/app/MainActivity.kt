@@ -18,6 +18,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -97,6 +98,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -198,7 +200,7 @@ class MainActivity : ComponentActivity() {
             phoneImageUrl = Uri.parse("android.resource://$packageName/${R.drawable.ikeda_teresa_phone_image}").toString(),
             type = MessageType.AUDIO,
             text = "全屏来电测试",
-            mediaUrl = Uri.parse("android.resource://$packageName/${R.raw.ringtone}").toString(),
+            mediaUrl = Uri.parse("android.resource://$packageName/${R.raw.test_voice}").toString(),
             thumbnailUrl = null,
             durationSeconds = null,
             sentAt = Instant.now().toString(),
@@ -1123,6 +1125,37 @@ private fun MessageCard(
                                 enabled = audioDurationMs > 0,
                                 modifier = Modifier.fillMaxWidth().height(28.dp),
                             )
+                        }
+                        if (audioPlaying) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp)
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                    ) {
+                                        context.startService(
+                                            Intent(context, VoicePlaybackService::class.java).apply {
+                                                action = VoicePlaybackService.ACTION_SET_SPEAKER
+                                                putExtra(VoicePlaybackService.EXTRA_SPEAKER_ON, !(audioState?.speakerOn ?: false))
+                                            }
+                                        )
+                                    }
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_audio_speaker_official),
+                                    contentDescription = if (audioState?.speakerOn == true) "切换到听筒" else "切换到扬声器",
+                                    tint = if (audioState?.speakerOn == true) 
+                                        MaterialTheme.colorScheme.primary 
+                                    else 
+                                        MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
                         }
                     }
                 }

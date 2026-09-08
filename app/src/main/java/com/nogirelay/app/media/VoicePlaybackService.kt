@@ -29,6 +29,7 @@ data class VoicePlaybackState(
     val isPlaying: Boolean = false,
     val positionMs: Int = 0,
     val durationMs: Int = 0,
+    val speakerOn: Boolean = false,
 )
 
 class VoicePlaybackService : Service() {
@@ -194,7 +195,7 @@ class VoicePlaybackService : Service() {
         val position = runCatching { activePlayer.currentPosition }.getOrDefault(0).coerceAtLeast(0)
         val duration = runCatching { activePlayer.duration }.getOrDefault(0).coerceAtLeast(0)
         val isPlayingNow = playing && runCatching { activePlayer.isPlaying }.getOrDefault(false)
-        val next = VoicePlaybackState(id, isPlayingNow, position, duration)
+        val next = VoicePlaybackState(id, isPlayingNow, position, duration, speakerOn)
         if (_playbackState.value != next) _playbackState.value = next
     }
 
@@ -209,12 +210,6 @@ class VoicePlaybackService : Service() {
         _playbackState.value = VoicePlaybackState()
         focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
         focusRequest = null
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            audioManager.clearCommunicationDevice()
-        } else {
-            @Suppress("DEPRECATION")
-            run { audioManager.isSpeakerphoneOn = false }
-        }
     }
 
     private suspend fun setAudioOutput(speakerOn: Boolean, fadeOnLegacyAndroid: Boolean) {
@@ -226,35 +221,14 @@ class VoicePlaybackService : Service() {
                 ?: outputDevices().find { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
         }
 
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            android.util.Log.d("VoicePlayback", "Using Android 12+ path")
-            if (speakerOn) {
-                val speaker = audioManager.availableCommunicationDevices
-                    .find { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-                if (speaker != null && !audioManager.setCommunicationDevice(speaker)) {
-                    android.util.Log.d("VoicePlaybackService", "Failed to select built-in speaker")
-                }
-            } else {
-                audioManager.clearCommunicationDevice()
-            }
-            android.util.Log.d("VoicePlayback", "setAudioOutput done (Android 12+)")
-            return
-        }
-
-        android.util.Log.d("VoicePlayback", "Using legacy path with fade")
+        // Use setPreferredDevice for MediaPlayer with USAGE_MEDIA
         val activePlayer = player
-        if (fadeOnLegacyAndroid) activePlayer?.runCatching { setVolume(0f, 0f) }
-        @Suppress("DEPRECATION")
-        run { audioManager.isSpeakerphoneOn = speakerOn }
-
-        if (fadeOnLegacyAndroid && activePlayer != null) {
-            for (step in 1..10) {
-                delay(LEGACY_ROUTE_FADE_STEP_MS)
-                val volume = step / 10f
-                activePlayer.runCatching { setVolume(volume, volume) }
-            }
+        if (activePlayer != null && preferredPlayerDevice != null) {
+            val result = activePlayer.setPreferredDevice(preferredPlayerDevice)
+            android.util.Log.d("VoicePlayback", "setPreferredDevice result=$result device=$preferredPlayerDevice")
+        } else {
+            android.util.Log.d("VoicePlayback", "Cannot set preferred device: player=$activePlayer device=$preferredPlayerDevice")
         }
-        android.util.Log.d("VoicePlayback", "setAudioOutput done (legacy)")
     }
 
     private fun outputDevices(): Array<AudioDeviceInfo> =
