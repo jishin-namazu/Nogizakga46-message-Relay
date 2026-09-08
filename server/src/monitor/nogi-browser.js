@@ -142,11 +142,6 @@ class NogiBrowserMonitor {
   }
 
   normalizeMessage(rawMessage, group) {
-    // 过滤已撤回/取消的消息
-    if (rawMessage.state === 'canceled') {
-      return null;
-    }
-
     const type = normalizeType(rawMessage.type || rawMessage.content_type);
     const memberName = firstNonEmpty(rawMessage.member_name, rawMessage.memberName, group.name, '乃木坂46');
     const sentAt = firstNonEmpty(
@@ -156,6 +151,8 @@ class NogiBrowserMonitor {
     );
     const id = firstNonEmpty(rawMessage.id, rawMessage.message_id);
     if (!id || !sentAt) return null;
+
+    const isCanceled = rawMessage.state === 'canceled';
 
     return {
       id: String(id),
@@ -172,6 +169,7 @@ class NogiBrowserMonitor {
       incoming_call_from: type === 'audio' ? memberName : null,
       ringtone_url: null,
       original_data: rawMessage,
+      is_canceled: isCanceled,
     };
   }
 
@@ -179,7 +177,8 @@ class NogiBrowserMonitor {
     const isNew = await this.messageStore.saveMessage(message);
     let pushed = false;
 
-    if (sendPush && isNew) {
+    // 不推送已撤回的消息
+    if (sendPush && isNew && !message.is_canceled) {
       try {
         await this.pusher.pushMessage(message);
         pushed = true;
