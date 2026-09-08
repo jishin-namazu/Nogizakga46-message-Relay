@@ -306,24 +306,25 @@ Invoke-RestMethod `
 $token = Read-Host 'ACCESS_TOKEN'
 
 # 方法 1: 从任意消息中查看成员信息
-$messages = Invoke-RestMethod `
+$response = Invoke-RestMethod `
   -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?limit=20' `
   -Headers @{ Authorization = "Bearer $token" }
 
 # 查看所有消息的成员 ID 和名称
-$messages | Select-Object member_id, member_name | Sort-Object member_id -Unique
+$response.messages | Select-Object member_id, member_name | Sort-Object member_id -Unique
 
 # 方法 2: 查看特定成员的消息来确认 ID
-$messages | Where-Object { $_.member_name -like "*成员名*" } | Select-Object member_id, member_name -First 1
+$response.messages | Where-Object { $_.member_name -like "*成员名*" } | Select-Object member_id, member_name -First 1
 ```
 
 输出示例：
 ```
 member_id member_name
 --------- -----------
-12        山下美月
-15        齋藤飛鳥
-23        遠藤さくら
+29        遠藤 さくら
+45        乃木坂46   
+47        池田 瑛紗  
+48        一ノ瀬 美空
 ```
 
 记下你关注的成员 ID，用于后续查询。
@@ -334,12 +335,12 @@ member_id member_name
 $token = Read-Host 'ACCESS_TOKEN'
 
 # 获取最新 50 条语音消息
-$messages = Invoke-RestMethod `
+$response = Invoke-RestMethod `
   -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?limit=50&type=audio' `
   -Headers @{ Authorization = "Bearer $token" }
 
 # 查看消息信息
-$messages | Format-Table id, member_name, member_id, created_at, content
+$response.messages | Format-Table id, member_name, member_id, created_at, content
 ```
 
 **API 查询参数：**
@@ -357,9 +358,10 @@ $messages | Format-Table id, member_name, member_id, created_at, content
 
 ```powershell
 # 获取指定成员的最新 30 条消息
-$messages = Invoke-RestMethod `
-  -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?member_id=12&limit=30' `
+$response = Invoke-RestMethod `
+  -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?member_id=29&limit=30' `
   -Headers @{ Authorization = "Bearer $token" }
+$response.messages | Format-Table id, member_name, type, text
 
 # 获取所有类型的消息（分页）
 $page1 = Invoke-RestMethod `
@@ -368,6 +370,7 @@ $page1 = Invoke-RestMethod `
 $page2 = Invoke-RestMethod `
   -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?limit=100&offset=100' `
   -Headers @{ Authorization = "Bearer $token" }
+Write-Host "第1页: $($page1.messages.Count) 条, 第2页: $($page2.messages.Count) 条"
 ```
 
 **步骤 2: 下载媒体文件**
@@ -405,13 +408,13 @@ $token = Read-Host 'ACCESS_TOKEN'
 New-Item -ItemType Directory -Force -Path "downloads"
 
 # 查询最新 100 条语音消息
-$messages = Invoke-RestMethod `
+$response = Invoke-RestMethod `
   -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?limit=100&type=audio' `
   -Headers @{ Authorization = "Bearer $token" }
 
-Write-Host "找到 $($messages.Count) 条语音消息"
+Write-Host "找到 $($response.messages.Count) 条语音消息"
 
-foreach ($msg in $messages) {
+foreach ($msg in $response.messages) {
   $id = $msg.id
   $memberName = $msg.member_name
   $date = $msg.created_at
