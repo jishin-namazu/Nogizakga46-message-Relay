@@ -4,7 +4,6 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import messageService from '../services/message.js';
 import pushService from '../services/push.js';
-import { NogiWebMonitor } from './nogi-web.js';
 import { recordError } from '../services/error-log.js';
 
 dotenv.config();
@@ -33,6 +32,26 @@ function parseGroupIds(value) {
     .map(item => Number.parseInt(item.trim(), 10))
     .filter(Number.isInteger)
     .filter((id, index, ids) => ids.indexOf(id) === index);
+}
+
+function normalizeType(type) {
+  const typeMap = {
+    text: 'text',
+    article: 'text',
+    picture: 'image',
+    photo: 'image',
+    image: 'image',
+    audio: 'audio',
+    voice: 'audio',
+    call: 'audio',
+    video: 'video',
+    movie: 'video',
+  };
+  return typeMap[String(type || '').toLowerCase()] || 'text';
+}
+
+function firstNonEmpty(...values) {
+  return values.find(value => value != null && String(value).trim() !== '') ?? null;
 }
 
 function browserExecutablePath() {
@@ -120,7 +139,51 @@ class NogiBrowserMonitor {
     this.hasCompletedInitialPoll = false;
     this.groupMessageIds = new Map();
     this.groups = new Map();
-    this.normalizer = new NogiWebMonitor({ messageStore, pusher });
+  }
+
+  normalizeMessage(rawMessage, group) {
+    const type = normalizeType(rawMessage.type || rawMessage.content_type);
+    const memberName = firstNonEmpty(rawMessage.member_name, rawMessage.memberName, group.name, '乃木坂46');
+    const sentAt = firstNonEmpty(
+      rawMessage.published_at,
+      rawMessage.sent_at,
+      rawMessage.created_at,
+    );
+    const id = firstNonEmpty(rawMessage.id, rawMessage.message_id);
+    if (!id || !sentAt) return null;
+
+    return {
+      id: String(id),
+      member_id: String(firstNonEmpty(rawMessage.member_id, rawMessage.memberId, group.id)),
+      member_name: memberName,
+      member_avatar_url: firstNonEmpty(rawMessage.member_avatar_url, rawMessage.avatar, group.thumbnail),
+      phone_image_url: firstNonEmpty(rawMessage.phone_image_url, rawMessage.phone_image, group.phone_image),
+      type,
+      text: firstNonEmpty(rawMessage.text, rawMessage.message),
+      media_url: firstNonEmpty(rawMessage.file, rawMessage.media_url),
+      thumbnail_url: firstNonEmpty(rawMessage.thumbnail, rawMessage.thumbnail_url),
+      duration_seconds: Number.parseInt(firstNonEmpty(rawMessage.duration, rawMessage.duration_seconds, 0), 10) || null,
+      sent_at: new Date(sentAt).toISOString(),
+      incoming_call_from: type === 'audio' ? memberName : null,
+      ringtone_url: null,
+      original_data: rawMessage,
+    };
+  }
+
+  async processMessage(message, sendPush) {
+    const isNew = await this.messageStore.saveMessage(message);
+    let pushed = false;
+
+    if (sendPush && isNew) {
+      try {
+        await this.pusher.pushMessage(message);
+        pushed = true;
+      } catch (error) {
+        await recordError('monitor.push_message', error, { messageId: message.id });
+      }
+    }
+
+    return { isNew, pushed, processed: true };
   }
 
   async start() {
@@ -439,12 +502,12 @@ class NogiBrowserMonitor {
       fetched += newMessages.length;
       for (const rawMessage of newMessages.reverse()) {
         const rawId = String(rawMessage.id ?? rawMessage.message_id);
-        const message = this.normalizer.normalizeMessage(rawMessage, group);
+        const message = this.normalizeMessage(rawMessage, group);
         if (!message) {
           previousIds.add(rawId);
           continue;
         }
-        const result = await this.normalizer.processMessage(message, sendPush);
+        const result = await this.processMessage(message, sendPush);
         stored += result.isNew ? 1 : 0;
         pushed += result.pushed ? 1 : 0;
         if (result.processed) previousIds.add(rawId);
