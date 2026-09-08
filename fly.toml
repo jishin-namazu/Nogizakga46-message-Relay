@@ -52,7 +52,7 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
   source = "nogi_media"
   destination = "/data"
 
-# 主 API 服务
+# 主 API 服务 (端口 80/443 映射到内部 8080)
 [[services]]
   protocol = "tcp"
   internal_port = 8080
@@ -84,6 +84,7 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
     path = "/health"
     protocol = "http"
 
+# 媒体服务 (端口 8081)
 [[services]]
   protocol = "tcp"
   internal_port = 8081
@@ -101,3 +102,4 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
     interval = "30s"
     timeout = "5s"
     grace_period = "10s"
+    port = 8081
