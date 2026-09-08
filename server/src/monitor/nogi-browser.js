@@ -15,7 +15,6 @@ const DEFAULT_APP_ID = 'jp.co.sonymusic.communication.nogizaka 2.5';
 const DEFAULT_PLATFORM = 'web';
 const DEFAULT_ORGANIZATION_ID = '1';
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
-const DEFAULT_MESSAGE_COUNT = 200;
 const DEFAULT_BROWSER_STATE_FILE = '/data/nogi-browser-state.json';
 const DEFAULT_FRONTEND_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 const DEFAULT_BROWSER_RESTART_INTERVAL_MS = 30 * 60 * 1000;
@@ -88,7 +87,6 @@ class NogiBrowserMonitor {
     this.platform = process.env.NOGI_APP_PLATFORM || DEFAULT_PLATFORM;
     this.organizationId = process.env.NOGI_ORGANIZATION_ID || DEFAULT_ORGANIZATION_ID;
     this.groupIds = parseGroupIds(process.env.NOGI_GROUP_IDS);
-    this.messageCount = Number.parseInt(process.env.NOGI_MESSAGE_COUNT || DEFAULT_MESSAGE_COUNT, 10) || DEFAULT_MESSAGE_COUNT;
     this.pollIntervalMs = Math.max(
       Number.parseInt(process.env.NOGI_POLL_INTERVAL_SECONDS || '60', 10) * 1000,
       15_000,
@@ -519,9 +517,9 @@ class NogiBrowserMonitor {
       .filter(group => Number.isInteger(group.id));
   }
 
-  async fetchTimeline(groupId, count = this.messageCount) {
+  async fetchTimeline(groupId) {
     const query = new URLSearchParams({
-      count: String(count),
+      count: '200',
       order: 'desc',
       clear_unread: 'false',
     });
@@ -532,44 +530,17 @@ class NogiBrowserMonitor {
     return payload.messages;
   }
 
-  async fetchAllMessages(groupId) {
-    let allMessages = [];
-    let lastMessageId = null;
-    let page = 0;
-    
-    while (true) {
-      const messages = await this.fetchTimeline(groupId, this.messageCount);
-      if (messages.length === 0) break;
-      
-      allMessages = allMessages.concat(messages);
-      page++;
-      
-      if (messages.length < this.messageCount) break;
-      
-      const oldestMessageId = messages[messages.length - 1]?.id ?? messages[messages.length - 1]?.message_id;
-      if (oldestMessageId === lastMessageId) break;
-      lastMessageId = oldestMessageId;
-      
-      console.log(`Fetching group ${groupId} page ${page}: ${messages.length} messages, total ${allMessages.length}`);
-    }
-    
-    return allMessages;
-  }
-
   async poll() {
     const groups = await this.resolveGroups();
     if (groups.length === 0) throw new Error('No active subscribed groups found');
 
     const sendPush = this.hasCompletedInitialPoll || !this.backfillOnStart;
-    const useFullSync = !this.hasCompletedInitialPoll;
     let fetched = 0;
     let stored = 0;
     let pushed = 0;
 
     for (const group of groups) {
-      const rawMessages = useFullSync 
-        ? await this.fetchAllMessages(group.id)
-        : await this.fetchTimeline(group.id);
+      const rawMessages = await this.fetchTimeline(group.id);
       const previousIds = this.groupMessageIds.get(group.id) || new Set();
       const currentIds = new Set(rawMessages.map(rawMessage => String(rawMessage.id ?? rawMessage.message_id)));
       const newMessages = rawMessages.filter(rawMessage => !previousIds.has(String(rawMessage.id ?? rawMessage.message_id)));
@@ -596,8 +567,7 @@ class NogiBrowserMonitor {
 
     this.hasCompletedInitialPoll = true;
     await this.persistStorageState();
-    const syncType = useFullSync ? 'initial full sync' : 'poll';
-    console.log(`Nogi browser monitor ${syncType} complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
+    console.log(`Nogi browser monitor poll complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
   }
 
   async loadStorageState() {
