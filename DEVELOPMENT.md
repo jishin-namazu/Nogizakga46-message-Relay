@@ -500,7 +500,49 @@ schema 包含成员基础信息表，但监控实际以官网 `/v2/groups` 返�
 
 完整 payload 小于约 3800 字符时直接携带；超过限制时只发送 `message_id` 和 `type`，客户端再调用消息详情接口。
 
-### 客户端
+### 客户端推送流程
+
+**获取 FCM Token:**
+
+Android 客户端在应用启动时通过 Firebase Cloud Messaging SDK 获取设备的 FCM Token:
+
+```kotlin
+// 在应用启动或 Firebase 初始化后
+FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+    if (!task.isSuccessful) {
+        Log.w(TAG, "Fetching FCM registration token failed", task.exception)
+        return@addOnCompleteListener
+    }
+    
+    // 获取到的 FCM token
+    val token = task.result
+    Log.d(TAG, "FCM Token: $token")
+    
+    // 保存到本地并注册到服务器
+    registerDeviceWithServer(token)
+}
+```
+
+FCM Token 会在以下情况自动刷新:
+- 应用首次启动
+- 应用被卸载后重新安装
+- 用户清除应用数据
+- Token 过期(极少发生)
+
+监听 Token 刷新:
+```kotlin
+class MyFirebaseMessagingService : FirebaseMessagingService() {
+    override fun onNewToken(token: String) {
+        super.onNewToken(token)
+        Log.d(TAG, "Refreshed token: $token")
+        
+        // Token 刷新后重新注册到服务器
+        registerDeviceWithServer(token)
+    }
+}
+```
+
+**推送接收流程:**
 
 1. Firebase 生成或刷新 FCM Token。
 2. 客户端保存 Token 并调用 `POST /v1/devices` 注册。
