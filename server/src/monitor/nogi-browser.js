@@ -672,6 +672,9 @@ class NogiBrowserMonitor {
       this.lastFrontendNavigationAt = 0;
 
       console.log('✓ 浏览器会话重载成功');
+      
+      await this.refreshFrontendSession();
+      console.log('✓ 会话刷新完成,已获取新的访问令牌');
     } catch (error) {
       console.error('重载会话失败:', error.message);
       await recordError('monitor.reload_session', error);
