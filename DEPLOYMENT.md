@@ -281,12 +281,6 @@ node .\server\upload-session.js --status https://nogi-relay.fly.dev YOUR_ACCESS_
 ```powershell
 $token = 'YOUR_ACCESS_TOKEN'
 Invoke-RestMethod `
-  -Uri 'https://nogi-relay.fly.dev/v1/admin/browser-session' `
-  -Headers @{ Authorization = "Bearer $token" }
-```
-
-### 3.5 媒体文件访问
-Invoke-RestMethod `
   -Uri 'https://nogi-relay.fly.dev/v1/admin/browser-session/status' `
   -Headers @{ Authorization = "Bearer $token" }
 ```
