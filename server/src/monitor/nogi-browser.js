@@ -237,11 +237,15 @@ class NogiBrowserMonitor {
               console.error('║  ⚠️  会话已过期且连续失败 ' + this.consecutiveAuthFailures + ' 次                             ║');
               console.error('║  请立即上传新的浏览器会话文件以恢复监控功能                 ║');
               console.error('║  使用命令: node upload-session.js <session-file> <url> <token> ║');
-              console.error('║  监控已暂停，等待新会话文件...                              ║');
+              console.error('║  监控已停止，等待新会话文件...                              ║');
               console.error('╚═════════════════════════════════════════════════════════════════╝');
               this.accessToken = '';
               this.observedTokenAt = 0;
-              await sleep(5 * 60_000);
+              
+              // 完全停止轮询,只等待会话文件更新
+              while (this.isRunning && this.consecutiveAuthFailures >= this.maxConsecutiveAuthFailures) {
+                await sleep(60_000);
+              }
               continue;
             }
             
@@ -268,41 +272,51 @@ class NogiBrowserMonitor {
 
   async openBrowser() {
     await this.closeBrowser();
+    
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('浏览器启动超时(90秒)')), 90_000);
+    });
+    
     try {
-      const storageState = await this.loadStorageState();
-      const persistedAccessToken = await this.loadAccessTokenState();
-      const executablePath = browserExecutablePath();
-      this.browser = await this.browserType.launch({
-        headless: this.headless,
-        channel: executablePath
-          ? undefined
-          : process.env.NOGI_BROWSER_CHANNEL || (this.headless ? 'chromium-headless-shell' : undefined),
-        executablePath,
-        timeout: 60_000,
-        args: [
-          '--no-sandbox',
-          '--disable-dev-shm-usage',
-        ],
-      });
-      this.context = await this.browser.newContext(storageState ? { storageState } : {});
-      this.page = this.context.pages()[0] || await this.context.newPage();
-      if (persistedAccessToken) {
-        this.accessToken = persistedAccessToken;
-        this.observedTokenAt = Date.now();
-        this.lastFrontendNavigationAt = Date.now();
-      }
-      this.page.on('request', request => this.observeRequest(request));
-      this.page.on('response', response => this.observeResponse(response));
-      if (this.blockPageMedia) {
-        await this.page.route('**/*', route => {
-          const resourceType = route.request().resourceType();
-          if (['image', 'media', 'font'].includes(resourceType)) {
-            return route.abort().catch(() => {});
+      await Promise.race([
+        (async () => {
+          const storageState = await this.loadStorageState();
+          const persistedAccessToken = await this.loadAccessTokenState();
+          const executablePath = browserExecutablePath();
+          this.browser = await this.browserType.launch({
+            headless: this.headless,
+            channel: executablePath
+              ? undefined
+              : process.env.NOGI_BROWSER_CHANNEL || (this.headless ? 'chromium-headless-shell' : undefined),
+            executablePath,
+            timeout: 60_000,
+            args: [
+              '--no-sandbox',
+              '--disable-dev-shm-usage',
+            ],
+          });
+          this.context = await this.browser.newContext(storageState ? { storageState } : {});
+          this.page = this.context.pages()[0] || await this.context.newPage();
+          if (persistedAccessToken) {
+            this.accessToken = persistedAccessToken;
+            this.observedTokenAt = Date.now();
+            this.lastFrontendNavigationAt = Date.now();
           }
-          return route.continue().catch(() => {});
-        });
-      }
-      this.browserStartedAt = Date.now();
+          this.page.on('request', request => this.observeRequest(request));
+          this.page.on('response', response => this.observeResponse(response));
+          if (this.blockPageMedia) {
+            await this.page.route('**/*', route => {
+              const resourceType = route.request().resourceType();
+              if (['image', 'media', 'font'].includes(resourceType)) {
+                return route.abort().catch(() => {});
+              }
+              return route.continue().catch(() => {});
+            });
+          }
+          this.browserStartedAt = Date.now();
+        })(),
+        timeoutPromise,
+      ]);
     } catch (error) {
       await this.closeBrowser();
       throw error;
@@ -412,25 +426,29 @@ class NogiBrowserMonitor {
     this.refreshPromise = (async () => {
       const previousToken = this.accessToken;
       const previousObservedTokenAt = this.observedTokenAt;
-      // A failed navigation must not make an old token look like a fresh
-      // session or overwrite the last known-good storage state.
       this.accessToken = '';
       this.observedTokenAt = 0;
+      
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('会话刷新超时(45秒)')), 45_000);
+      });
+      
       try {
         console.log('正在刷新前端会话...');
-        // Flutter keeps long-lived resources open, so waiting for
-        // `domcontentloaded` can stall the worker indefinitely. `commit` is
-        // enough to start the app; the bounded settle period below lets its
-        // TokenManager finish the normal API calls.
-        await this.page.goto(this.pageUrl, { waitUntil: 'commit', timeout: 30_000 });
-        await this.waitForAccessToken();
-        await this.page.waitForTimeout(this.pageSettleMs);
-        this.lastFrontendNavigationAt = Date.now();
-        if (previousToken && previousToken !== this.accessToken) {
-          console.log('Nogi browser session supplied a refreshed access token');
-        }
-        await this.persistStorageState();
-        await this.persistAccessToken();
+        await Promise.race([
+          (async () => {
+            await this.page.goto(this.pageUrl, { waitUntil: 'commit', timeout: 25_000 });
+            await this.waitForAccessToken();
+            await this.page.waitForTimeout(this.pageSettleMs);
+            this.lastFrontendNavigationAt = Date.now();
+            if (previousToken && previousToken !== this.accessToken) {
+              console.log('Nogi browser session supplied a refreshed access token');
+            }
+            await this.persistStorageState();
+            await this.persistAccessToken();
+          })(),
+          timeoutPromise,
+        ]);
         console.log('前端会话刷新成功');
       } catch (error) {
         console.error('前端会话刷新失败:', error.message);
@@ -531,43 +549,52 @@ class NogiBrowserMonitor {
   }
 
   async poll() {
-    const groups = await this.resolveGroups();
-    if (groups.length === 0) throw new Error('No active subscribed groups found');
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('轮询超时(120秒)')), 120_000);
+    });
+    
+    await Promise.race([
+      (async () => {
+        const groups = await this.resolveGroups();
+        if (groups.length === 0) throw new Error('No active subscribed groups found');
 
-    const sendPush = this.hasCompletedInitialPoll || !this.backfillOnStart;
-    let fetched = 0;
-    let stored = 0;
-    let pushed = 0;
+        const sendPush = this.hasCompletedInitialPoll || !this.backfillOnStart;
+        let fetched = 0;
+        let stored = 0;
+        let pushed = 0;
 
-    for (const group of groups) {
-      const rawMessages = await this.fetchTimeline(group.id);
-      const previousIds = this.groupMessageIds.get(group.id) || new Set();
-      const currentIds = new Set(rawMessages.map(rawMessage => String(rawMessage.id ?? rawMessage.message_id)));
-      const newMessages = rawMessages.filter(rawMessage => !previousIds.has(String(rawMessage.id ?? rawMessage.message_id)));
-      const failedIds = new Set();
-      fetched += newMessages.length;
-      for (const rawMessage of newMessages.reverse()) {
-        const rawId = String(rawMessage.id ?? rawMessage.message_id);
-        const message = this.normalizeMessage(rawMessage, group);
-        if (!message) {
-          previousIds.add(rawId);
-          continue;
+        for (const group of groups) {
+          const rawMessages = await this.fetchTimeline(group.id);
+          const previousIds = this.groupMessageIds.get(group.id) || new Set();
+          const currentIds = new Set(rawMessages.map(rawMessage => String(rawMessage.id ?? rawMessage.message_id)));
+          const newMessages = rawMessages.filter(rawMessage => !previousIds.has(String(rawMessage.id ?? rawMessage.message_id)));
+          const failedIds = new Set();
+          fetched += newMessages.length;
+          for (const rawMessage of newMessages.reverse()) {
+            const rawId = String(rawMessage.id ?? rawMessage.message_id);
+            const message = this.normalizeMessage(rawMessage, group);
+            if (!message) {
+              previousIds.add(rawId);
+              continue;
+            }
+            const result = await this.processMessage(message, sendPush);
+            stored += result.isNew ? 1 : 0;
+            pushed += result.pushed ? 1 : 0;
+            if (result.processed) previousIds.add(rawId);
+            else failedIds.add(rawId);
+          }
+          this.groupMessageIds.set(
+            group.id,
+            new Set([...currentIds].filter(id => !failedIds.has(id))),
+          );
         }
-        const result = await this.processMessage(message, sendPush);
-        stored += result.isNew ? 1 : 0;
-        pushed += result.pushed ? 1 : 0;
-        if (result.processed) previousIds.add(rawId);
-        else failedIds.add(rawId);
-      }
-      this.groupMessageIds.set(
-        group.id,
-        new Set([...currentIds].filter(id => !failedIds.has(id))),
-      );
-    }
 
-    this.hasCompletedInitialPoll = true;
-    await this.persistStorageState();
-    console.log(`Nogi browser monitor poll complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
+        this.hasCompletedInitialPoll = true;
+        await this.persistStorageState();
+        console.log(`Nogi browser monitor poll complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
+      })(),
+      timeoutPromise,
+    ]);
   }
 
   async loadStorageState() {
