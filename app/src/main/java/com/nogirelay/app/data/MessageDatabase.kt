@@ -92,7 +92,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         readableDatabase.query(
             "messages",
             null,
-            "id NOT GLOB ?",
+            "id NOT GLOB ? AND (text_content IS NOT NULL OR media_url IS NOT NULL)",
             arrayOf(TEST_MESSAGE_GLOB),
             null,
             null,
@@ -222,6 +222,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
     private fun memberFilter(memberKey: String, searchQuery: String): QueryFilter {
         val clauses = mutableListOf(
             "id NOT GLOB ?",
+            "(text_content IS NOT NULL OR media_url IS NOT NULL)",
             "((TRIM(member_id) <> '' AND member_id = ?) OR (TRIM(member_id) = '' AND member_name = ?))",
         )
         val arguments = mutableListOf(TEST_MESSAGE_GLOB, memberKey, memberKey)
