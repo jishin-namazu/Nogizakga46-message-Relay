@@ -146,6 +146,8 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val syncRequests = MutableStateFlow(0L)
+    private lateinit var proximityControl: com.nogirelay.app.call.ProximityScreenControl
+    private lateinit var audioManager: android.media.AudioManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -157,6 +159,9 @@ class MainActivity : ComponentActivity() {
         if (AppGraph.settings.read().relayUrl.isNotBlank()) {
             PushRegistrar.registerCurrentToken(this)
         }
+        
+        proximityControl = com.nogirelay.app.call.OfficialProximityScreenControl(this)
+        audioManager = getSystemService(android.media.AudioManager::class.java)
 
         setContent {
             NogiRelayTheme {
@@ -167,6 +172,7 @@ class MainActivity : ComponentActivity() {
                     onTestCall = ::testCall,
                     syncRequests = syncRequests,
                     onManualSync = { syncRequests.update { it + 1 } },
+                    onUpdateProximity = ::updateProximityLock,
                 )
             }
         }
@@ -175,6 +181,25 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         syncRequests.update { it + 1 }
+    }
+
+    override fun onDestroy() {
+        proximityControl.close()
+        super.onDestroy()
+    }
+
+    private fun updateProximityLock(playback: VoicePlaybackState) {
+        val speakerOn = playback.speakerOn
+        val isExternalAudioConnected = audioManager.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
+            .any { device ->
+                device.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                device.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                device.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                device.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                device.type == android.media.AudioDeviceInfo.TYPE_USB_HEADSET
+            }
+        val shouldEnable = playback.isPlaying && !speakerOn && !isExternalAudioConnected
+        proximityControl.setEnabled(shouldEnable)
     }
 
     private fun openMedia(message: RelayMessage) {
@@ -229,6 +254,7 @@ private fun RelayApp(
     onTestCall: () -> Unit,
     syncRequests: StateFlow<Long>,
     onManualSync: () -> Unit,
+    onUpdateProximity: (VoicePlaybackState) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var tab by remember { mutableStateOf(if (initialMessageId == null) AppTab.HOME else AppTab.MESSAGES) }
@@ -337,8 +363,10 @@ private fun RelayApp(
 
                 AppTab.MESSAGES -> MessagesScreen(
                     refreshKey = refreshKey,
+                    initialMessageId = initialMessageId,
                     onOpenMedia = onOpenMedia,
                     onPlayVoice = onPlayVoice,
+                    onUpdateProximity = onUpdateProximity,
                 )
 
                 AppTab.SETTINGS -> SettingsScreen()
@@ -543,8 +571,10 @@ private fun PermissionRow(
 @Composable
 private fun MessagesScreen(
     refreshKey: Int,
+    initialMessageId: String?,
     onOpenMedia: (RelayMessage) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
+    onUpdateProximity: (VoicePlaybackState) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val downloadScope = rememberCoroutineScope()
@@ -558,6 +588,19 @@ private fun MessagesScreen(
     var currentPage by remember { mutableIntStateOf(0) }
     var pageInput by remember { mutableStateOf("1") }
     var pendingDownload by remember { mutableStateOf<RelayMessage?>(null) }
+    
+    LaunchedEffect(playbackState) {
+        onUpdateProximity(playbackState)
+    }
+    
+    LaunchedEffect(initialMessageId) {
+        if (initialMessageId != null) {
+            val message = AppGraph.database.find(initialMessageId)
+            if (message != null) {
+                selectedMemberId = message.memberId.ifBlank { message.memberName }
+            }
+        }
+    }
 
     val saveDownload: (RelayMessage) -> Unit = { message ->
         downloadScope.launch(Dispatchers.IO) {
@@ -633,9 +676,38 @@ private fun MessagesScreen(
                 threads = threads,
                 onSelect = {
                     searchQuery = ""
-                    currentPage = 0
-                    pageInput = "1"
                     selectedMemberId = it.id
+                    
+                    // Check if there's a playing message for this member
+                    val currentPlayingMessageId = playbackState.messageId
+                    if (playbackState.isPlaying && currentPlayingMessageId != null) {
+                        val playingMessage = AppGraph.database.find(currentPlayingMessageId)
+                        val playingMemberId = playingMessage?.memberId?.ifBlank { playingMessage.memberName }
+                        if (playingMemberId == it.id) {
+                            // Calculate which page the playing message is on
+                            val allMessages = AppGraph.database.messagesForMember(
+                                memberKey = it.id,
+                                searchQuery = "",
+                                limit = Int.MAX_VALUE,
+                                offset = 0,
+                            )
+                            val playingIndex = allMessages.indexOfFirst { msg -> msg.id == currentPlayingMessageId }
+                            if (playingIndex >= 0) {
+                                val targetPage = playingIndex / MEMBER_MESSAGES_PAGE_SIZE
+                                currentPage = targetPage
+                                pageInput = (targetPage + 1).toString()
+                            } else {
+                                currentPage = 0
+                                pageInput = "1"
+                            }
+                        } else {
+                            currentPage = 0
+                            pageInput = "1"
+                        }
+                    } else {
+                        currentPage = 0
+                        pageInput = "1"
+                    }
                 },
             )
         } else {
@@ -656,6 +728,7 @@ private fun MessagesScreen(
                     offset = page * MEMBER_MESSAGES_PAGE_SIZE,
                 )
             }
+            
             fun goToPage(targetPage: Int) {
                 val safePage = targetPage.coerceIn(0, totalPages - 1)
                 currentPage = safePage
@@ -666,7 +739,19 @@ private fun MessagesScreen(
             LaunchedEffect(selectedMember, searchQuery, page) {
                 if (currentPage != page) currentPage = page
                 pageInput = (page + 1).toString()
-                if (memberMessages.isNotEmpty()) messageListState.scrollToItem(0)
+                if (memberMessages.isNotEmpty()) {
+                    // Check if playing message is in current page
+                    if (playbackState.isPlaying && playbackState.messageId != null) {
+                        val playingIndex = memberMessages.indexOfFirst { it.id == playbackState.messageId }
+                        if (playingIndex >= 0) {
+                            messageListState.scrollToItem(playingIndex + 1)
+                        } else {
+                            messageListState.scrollToItem(0)
+                        }
+                    } else {
+                        messageListState.scrollToItem(0)
+                    }
+                }
             }
             if (showPageDialog) {
                 AlertDialog(
