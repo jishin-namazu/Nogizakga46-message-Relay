@@ -147,7 +147,43 @@ flyctl releases --app nogi-relay
 flyctl deploy --app nogi-relay --image registry.fly.io/nogi-relay:IMAGE_TAG
 ```
 
-### 2.7 媒体卷
+### 2.7 持久卷配置
+
+**默认配置:**
+- 大小: 3 GB
+- 挂载点: `/data`
+- 加密: 已启用
+- 在免费额度内 (最多 3GB)
+
+**查看当前卷:**
+```powershell
+flyctl volumes list --app nogi-relay
+```
+
+**存储用途分配:**
+- 会话文件: `nogi-browser-state.json` (~几百 KB)
+- Access token: `nogi-access-token.json` (~几 KB)
+- 日志文件: `/data/nogi-logs/` (~100-200 MB)
+- 媒体缓存: `/data/nogi-media/` (~2.7 GB)
+
+**存储空间监控:**
+```powershell
+flyctl ssh console -a nogi-relay
+df -h /data
+du -sh /data/*
+```
+
+**如需扩容:**
+```powershell
+# 扩展到 5GB (超出免费额度,需付费)
+flyctl volumes extend VOLUME_ID --size 5 -a nogi-relay
+
+# 扩容会立即生效,无需重启服务
+```
+
+**注意:** `fly.toml` 中的 `initial_size = "3gb"` 只对新卷生效,不会自动扩展现有卷。
+
+### 2.8 媒体存储
 
 正式图片、语音、视频、缩略图和来电背景存储在 `/data/nogi-media/<消息ID>/`：
 
@@ -156,6 +192,8 @@ media.<扩展名>
 thumbnail.<扩展名>
 phone_image.<扩展名>
 ```
+
+单个媒体文件限制: 100 MB
 
 来电背景通过 `/v1/messages/:id/media/phone_image` 提供，和其他媒体一样需要 Relay Bearer Token。持久卷不能跨应用自动复制，变更应用或区域前应先备份。
 
