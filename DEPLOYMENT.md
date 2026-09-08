@@ -103,7 +103,35 @@ flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.js
 
 上传后 monitor 会自动检测文件变化并重启浏览器，无需重启服务。会话过期后重新生成并上传；不要把 `nogi-browser-state.json` 提交到 Git。
 
-### 2.5 部署和回滚
+### 2.5 机器配置
+
+**默认配置:**
+- Memory: 1024 MB (1 GB)
+- CPUs: 1 shared vCPU
+- 类型: shared-cpu-1x (免费层)
+
+**查看当前配置:**
+```powershell
+flyctl scale show --app nogi-relay
+```
+
+**内存使用情况:**
+- 正常运行: 500-700 MB
+- 刷新会话峰值: 800-900 MB
+- 主动重启阈值: > 850 MB
+
+服务器已优化为在 1GB 内存下稳定运行:
+- 使用轻量级 `chromium-headless-shell`
+- 启用 13+ 个内存优化参数
+- 主动监控并在接近限制时重启浏览器
+- 强制垃圾回收清理内存
+
+**如遇频繁 OOM,可升级内存 (需付费):**
+```powershell
+flyctl scale memory 2048 -a nogi-relay  # 升级到 2GB
+```
+
+### 2.6 部署和回滚
 
 ```powershell
 flyctl deploy --remote-only --app nogi-relay
@@ -119,7 +147,7 @@ flyctl releases --app nogi-relay
 flyctl deploy --app nogi-relay --image registry.fly.io/nogi-relay:IMAGE_TAG
 ```
 
-### 2.6 媒体卷
+### 2.7 媒体卷
 
 正式图片、语音、视频、缩略图和来电背景存储在 `/data/nogi-media/<消息ID>/`：
 
@@ -645,6 +673,81 @@ Write-Host "`n下载完成，文件保存在 downloads 目录"
 - 看到 `第 5/10 次` 以上时应及时处理
 - 避免在其他浏览器登录官网
 - 建议每月主动更新一次会话文件
+
+### 服务器内存不足 (OOM)
+
+**症状:**
+- 日志中出现 `Out of memory: Killed process` 或 `OOM killed`
+- 服务反复重启
+- 健康检查失败
+- 浏览器启动或会话刷新时崩溃
+
+**原因:**
+- Chromium + Node.js 内存占用超过机器限制 (1GB)
+- 会话刷新时内存激增
+- 内存泄漏累积
+
+**当前优化措施:**
+
+1. **使用轻量浏览器**
+   - 强制使用 `chromium-headless-shell` (比标准版轻 30-40%)
+   
+2. **Chromium 启动参数优化**
+   ```
+   --disable-gpu                    禁用 GPU 渲染
+   --disable-extensions             禁用扩展
+   --single-process                 单进程模式
+   --js-flags=--max-old-space-size=256  限制 V8 堆内存
+   ```
+
+3. **主动内存监控**
+   - RSS 超过 850MB (85%) 时自动重启浏览器
+   - 每 10 次循环记录内存状态
+   - 关闭浏览器后强制垃圾回收
+
+**排查步骤:**
+
+1. **查看内存使用日志:**
+   ```powershell
+   flyctl logs --app nogi-relay | Select-String "内存|OOM|RSS"
+   ```
+   
+   正常日志示例:
+   ```text
+   内存状态: RSS=650MB, Heap=180MB/256MB
+   ```
+   
+   异常日志示例:
+   ```text
+   内存使用过高 (RSS: 920MB, Heap: 240MB), 触发浏览器重启
+   Out of memory: Killed process
+   ```
+
+2. **检查当前机器配置:**
+   ```powershell
+   flyctl scale show --app nogi-relay
+   ```
+   
+   确认:
+   - Memory: 1024 MB
+   - CPUs: 1 shared
+
+3. **如需增加内存 (需付费):**
+   ```powershell
+   # 升级到 2GB (超出免费额度)
+   flyctl scale memory 2048 -a nogi-relay
+   ```
+
+**预防措施:**
+- 监控日志中的内存状态
+- RSS 经常超过 800MB 时考虑优化或升级
+- 定期重启可以清理累积的内存泄漏
+
+**内存使用参考:**
+- 正常运行: 500-700 MB
+- 刷新会话时: 峰值可达 800-900 MB
+- 触发主动重启: > 850 MB
+- OOM 阈值: ~1000 MB
 
 ### 监控健康状态检查
 
