@@ -391,6 +391,55 @@ foreach ($msg in $messages) {
 - 重新生成 state、上传并重启 monitor。
 - 确认账号仍有有效成员订阅。
 
+### 设备管理
+
+**查询所有注册设备:**
+
+```powershell
+$token = Read-Host 'ACCESS_TOKEN'
+Invoke-RestMethod -Uri 'https://nogi-relay.fly.dev/v1/devices' -Headers @{ Authorization = "Bearer $token" } | ConvertTo-Json -Depth 6
+```
+
+返回示例:
+```json
+{
+  "success": true,
+  "devices": [
+    {
+      "id": 1,
+      "platform": "android",
+      "label": "Pixel 8 Pro",
+      "last_seen_at": "2026-09-08T09:30:15.123Z",
+      "created_at": "2026-09-01T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+**删除指定设备:**
+
+```powershell
+$token = Read-Host 'ACCESS_TOKEN'
+$deviceId = Read-Host '设备 ID'
+Invoke-RestMethod -Uri "https://nogi-relay.fly.dev/v1/devices/$deviceId" -Method DELETE -Headers @{ Authorization = "Bearer $token" }
+```
+
+**批量清理长期未活跃设备:**
+
+使用 SQL 查询找出超过 90 天未活跃的设备:
+```sql
+SELECT id, platform, label, last_seen_at, created_at
+FROM devices
+WHERE last_seen_at < NOW() - INTERVAL '90 days'
+ORDER BY last_seen_at;
+```
+
+删除指定设备后,客户端会在下次启动时自动重新注册。如果设备的 FCM token 失效,推送会失败但设备记录不会自动删除,需要手动清理。
+
+**设备 token 更新:**
+
+客户端检测到 FCM token 变化时会自动调用 `POST /v1/devices` 更新。如果同一 FCM token 已存在,API 会更新 `last_seen_at` 和 `label`,不会创建重复记录。
+
 ## 6. 日志、备份和恢复
 
 ### 日志
