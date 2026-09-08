@@ -88,9 +88,9 @@ class NogiBrowserMonitor {
     this.platform = process.env.NOGI_APP_PLATFORM || DEFAULT_PLATFORM;
     this.organizationId = process.env.NOGI_ORGANIZATION_ID || DEFAULT_ORGANIZATION_ID;
     this.groupIds = parseGroupIds(process.env.NOGI_GROUP_IDS);
-    this.messageCount = Math.min(
-      Math.max(Number.parseInt(process.env.NOGI_MESSAGE_COUNT || DEFAULT_MESSAGE_COUNT, 10), 1),
-      DEFAULT_MESSAGE_COUNT,
+    this.messageCount = Math.max(
+      Number.parseInt(process.env.NOGI_MESSAGE_COUNT || DEFAULT_MESSAGE_COUNT, 10),
+      1,
     );
     this.pollIntervalMs = Math.max(
       Number.parseInt(process.env.NOGI_POLL_INTERVAL_SECONDS || '60', 10) * 1000,
