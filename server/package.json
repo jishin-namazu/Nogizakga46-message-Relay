@@ -22,6 +22,10 @@
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jishin-namazu/Nogizakga46-message-Relay.git"
+  },
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",

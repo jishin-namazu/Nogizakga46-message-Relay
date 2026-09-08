@@ -1,5 +1,7 @@
 # Nogi Relay
 
+[![GitHub](https://img.shields.io/badge/GitHub-jishin--namazu%2FNogizakga46--message--Relay-blue?logo=github)](https://github.com/jishin-namazu/Nogizakga46-message-Relay)
+
 Nogi Relay 用于接收乃木坂46官方消息，归档文字和媒体，通过 Firebase Cloud Messaging（FCM）推送到 Android 客户端，并提供历史同步、搜索、分页、翻译和语音来电能力。
 
 ## 文档
