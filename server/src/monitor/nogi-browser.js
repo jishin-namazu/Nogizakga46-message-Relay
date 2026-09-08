@@ -478,9 +478,9 @@ class NogiBrowserMonitor {
       .filter(group => Number.isInteger(group.id));
   }
 
-  async fetchTimeline(groupId) {
+  async fetchTimeline(groupId, count = this.messageCount) {
     const query = new URLSearchParams({
-      count: String(this.messageCount),
+      count: String(count),
       order: 'desc',
       clear_unread: 'false',
     });
@@ -491,17 +491,40 @@ class NogiBrowserMonitor {
     return payload.messages;
   }
 
+  async fetchAllMessages(groupId, maxPages = 10) {
+    let allMessages = [];
+    let lastMessageId = null;
+    
+    for (let page = 0; page < maxPages; page++) {
+      const messages = await this.fetchTimeline(groupId, this.messageCount);
+      if (messages.length === 0) break;
+      
+      allMessages = allMessages.concat(messages);
+      
+      if (messages.length < this.messageCount) break;
+      
+      const oldestMessageId = messages[messages.length - 1]?.id ?? messages[messages.length - 1]?.message_id;
+      if (oldestMessageId === lastMessageId) break;
+      lastMessageId = oldestMessageId;
+    }
+    
+    return allMessages;
+  }
+
   async poll() {
     const groups = await this.resolveGroups();
     if (groups.length === 0) throw new Error('No active subscribed groups found');
 
     const sendPush = this.hasCompletedInitialPoll || !this.backfillOnStart;
+    const useFullSync = !this.hasCompletedInitialPoll;
     let fetched = 0;
     let stored = 0;
     let pushed = 0;
 
     for (const group of groups) {
-      const rawMessages = await this.fetchTimeline(group.id);
+      const rawMessages = useFullSync 
+        ? await this.fetchAllMessages(group.id)
+        : await this.fetchTimeline(group.id);
       const previousIds = this.groupMessageIds.get(group.id) || new Set();
       const currentIds = new Set(rawMessages.map(rawMessage => String(rawMessage.id ?? rawMessage.message_id)));
       const newMessages = rawMessages.filter(rawMessage => !previousIds.has(String(rawMessage.id ?? rawMessage.message_id)));
@@ -528,7 +551,8 @@ class NogiBrowserMonitor {
 
     this.hasCompletedInitialPoll = true;
     await this.persistStorageState();
-    console.log(`Nogi browser monitor poll complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
+    const syncType = useFullSync ? 'initial full sync' : 'poll';
+    console.log(`Nogi browser monitor ${syncType} complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
   }
 
   async loadStorageState() {
