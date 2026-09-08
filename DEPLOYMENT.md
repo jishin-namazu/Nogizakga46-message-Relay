@@ -292,71 +292,146 @@ Invoke-RestMethod `
 
 ### 3.5 获取服务器媒体文件
 
-**API 端点:**
-```
-GET /v1/messages/:id/media/:kind
-Authorization: Bearer YOUR_ACCESS_TOKEN
-```
+**完整工作流程：**
 
-**kind 参数说明:**
-- `media`: 原始图片、语音或视频文件
-- `thumbnail`: 图片或视频的缩略图
-- `phone_image`: 语音来电的背景图片
+1. **查询消息列表获取 ID**
+2. **下载对应的媒体文件**
 
-**获取语音文件示例:**
+**步骤 1: 查询消息列表**
+
 ```powershell
 $token = Read-Host 'ACCESS_TOKEN'
-$messageId = 'abc123'
+
+# 获取最新 50 条语音消息
+$messages = Invoke-RestMethod `
+  -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?limit=50&type=audio' `
+  -Headers @{ Authorization = "Bearer $token" }
+
+# 查看消息信息
+$messages | Format-Table id, member_name, created_at, content
+```
+
+**API 查询参数：**
+- `limit`: 返回数量（默认 20，最大 100）
+- `offset`: 跳过前 N 条（用于分页）
+- `type`: 消息类型
+  - `text`: 文字消息
+  - `image`: 图片消息
+  - `audio`: 语音消息
+  - `video`: 视频消息
+- `member_id`: 按成员 ID 过滤
+- `sort`: 排序方式（`desc` 或 `asc`，默认 `desc`）
+
+**查询示例：**
+
+```powershell
+# 获取指定成员的最新 30 条消息
+$messages = Invoke-RestMethod `
+  -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?member_id=12&limit=30' `
+  -Headers @{ Authorization = "Bearer $token" }
+
+# 获取所有类型的消息（分页）
+$page1 = Invoke-RestMethod `
+  -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?limit=100&offset=0' `
+  -Headers @{ Authorization = "Bearer $token" }
+$page2 = Invoke-RestMethod `
+  -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?limit=100&offset=100' `
+  -Headers @{ Authorization = "Bearer $token" }
+```
+
+**步骤 2: 下载媒体文件**
+
+**媒体类型说明：**
+- `media`: 原始文件（图片/语音/视频）
+- `thumbnail`: 缩略图（仅图片和视频有）
+- `phone_image`: 来电背景图（仅语音消息有）
+
+**下载单个文件：**
+
+```powershell
+$token = Read-Host 'ACCESS_TOKEN'
+$messageId = '12345'  # 从上面查询到的消息 ID
+
+# 下载语音文件
 Invoke-WebRequest `
   -Uri "https://YOUR_APP_NAME.fly.dev/v1/messages/$messageId/media/media" `
   -Headers @{ Authorization = "Bearer $token" } `
   -OutFile "voice_$messageId.wav"
-```
 
-**获取来电背景图示例:**
-```powershell
-$token = Read-Host 'ACCESS_TOKEN'
-$messageId = 'abc123'
+# 下载来电背景图
 Invoke-WebRequest `
   -Uri "https://YOUR_APP_NAME.fly.dev/v1/messages/$messageId/media/phone_image" `
   -Headers @{ Authorization = "Bearer $token" } `
   -OutFile "phone_image_$messageId.jpg"
 ```
 
-**批量下载消息媒体:**
+**批量下载脚本：**
+
 ```powershell
 $token = Read-Host 'ACCESS_TOKEN'
+
+# 创建下载目录
+New-Item -ItemType Directory -Force -Path "downloads"
+
+# 查询最新 100 条语音消息
 $messages = Invoke-RestMethod `
   -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?limit=100&type=audio' `
   -Headers @{ Authorization = "Bearer $token" }
 
+Write-Host "找到 $($messages.Count) 条语音消息"
+
 foreach ($msg in $messages) {
   $id = $msg.id
+  $memberName = $msg.member_name
+  $date = $msg.created_at
+  
+  Write-Host "下载: [$memberName] $date - ID: $id"
+  
   try {
+    # 下载语音文件
+    $audioPath = "downloads/${id}_${memberName}.wav"
     Invoke-WebRequest `
       -Uri "https://YOUR_APP_NAME.fly.dev/v1/messages/$id/media/media" `
       -Headers @{ Authorization = "Bearer $token" } `
-      -OutFile "downloads/$id.wav"
-    Write-Host "Downloaded: $id"
+      -OutFile $audioPath
+    
+    # 下载来电背景图
+    $imagePath = "downloads/${id}_${memberName}_phone.jpg"
+    Invoke-WebRequest `
+      -Uri "https://YOUR_APP_NAME.fly.dev/v1/messages/$id/media/phone_image" `
+      -Headers @{ Authorization = "Bearer $token" } `
+      -OutFile $imagePath
+    
+    Write-Host "  ✓ 成功" -ForegroundColor Green
   } catch {
-    Write-Warning "Failed: $id - $_"
+    Write-Warning "  ✗ 失败: $_"
   }
+  
+  Start-Sleep -Milliseconds 100  # 避免请求过快
 }
+
+Write-Host "`n下载完成，文件保存在 downloads 目录"
 ```
 
 **响应说明:**
-- 成功: HTTP 200,返回文件二进制流,Content-Type 根据文件类型设置
-- 未找到: HTTP 404,消息 ID 不存在或该消息没有对应的媒体类型
-- 未授权: HTTP 401,Bearer Token 缺失或无效
-- 媒体未就绪: HTTP 404,monitor 还未下载归档该媒体文件
+- **HTTP 200**: 成功，返回文件二进制流
+- **HTTP 404**: 消息 ID 不存在，或该消息没有对应的媒体类型，或 monitor 还未下载归档该文件
+- **HTTP 401**: Bearer Token 缺失或无效
+- **HTTP 429**: 触发限流（15 分钟内同一 IP 最多 100 次请求）
 
-**存储位置:**
-所有媒体文件存储在 monitor 机器的 `/data/nogi-media/<消息ID>/` 目录:
-```text
-/data/nogi-media/abc123/
-  ├── media.wav           # 原始语音文件
-  └── phone_image.jpg     # 来电背景图
-```
+**常见问题：**
+
+1. **下载失败 404 - 媒体未就绪**
+   - monitor 可能还没有下载该媒体文件
+   - 查看服务器日志确认 monitor 是否正常运行
+
+2. **文件扩展名不对**
+   - 服务器会根据实际文件类型返回正确的 `Content-Type`
+   - 可以根据响应头调整文件扩展名
+
+3. **批量下载太慢**
+   - 可以使用并发下载，但注意不要超过限流阈值
+   - 推荐每次请求间隔至少 100ms
 
 ## 4. 推送验收
 
