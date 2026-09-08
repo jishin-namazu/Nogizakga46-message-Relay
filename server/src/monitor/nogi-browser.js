@@ -142,6 +142,11 @@ class NogiBrowserMonitor {
   }
 
   normalizeMessage(rawMessage, group) {
+    // 过滤已撤回/取消的消息
+    if (rawMessage.state === 'canceled') {
+      return null;
+    }
+
     const type = normalizeType(rawMessage.type || rawMessage.content_type);
     const memberName = firstNonEmpty(rawMessage.member_name, rawMessage.memberName, group.name, '乃木坂46');
     const sentAt = firstNonEmpty(
