@@ -49,7 +49,7 @@ psql $env:DATABASE_URL -f .\server\database\schema.sql
 
 ```powershell
 $token = Read-Host 'ACCESS_TOKEN'
-Invoke-RestMethod -Method Post -Uri 'https://nogi-relay.fly.dev/init-db' -Headers @{ Authorization = "Bearer $token" }
+Invoke-RestMethod -Method Post -Uri 'https://YOUR_APP_NAME.fly.dev/init-db' -Headers @{ Authorization = "Bearer $token" }
 ```
 
 schema 会创建媒体字段 `media_local_path`、`thumbnail_local_path` 和来电背景字段 `phone_image_local_path`。API 启动时还会执行兼容性迁移。
@@ -81,7 +81,7 @@ npm run bootstrap:browser
 **上传会话到生产环境(推荐使用 API 方式):**
 
 ```powershell
-node upload-session.js .\nogi-browser-state.json https://nogi-relay.fly.dev YOUR_ACCESS_TOKEN
+node upload-session.js .\nogi-browser-state.json https://YOUR_APP_NAME.fly.dev YOUR_ACCESS_TOKEN
 ```
 
 上传成功后，monitor 会自动检测文件变化并**完全重启浏览器实例**，无需手动重启服务。重启过程：
@@ -108,7 +108,7 @@ flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.js
 ```powershell
 flyctl deploy --remote-only --app nogi-relay
 flyctl status --app nogi-relay
-Invoke-RestMethod 'https://nogi-relay.fly.dev/health'
+Invoke-RestMethod 'https://YOUR_APP_NAME.fly.dev/health'
 flyctl logs --app nogi-relay --no-tail
 ```
 
@@ -136,7 +136,7 @@ phone_image.<扩展名>
 ### 3.1 API 健康检查
 
 ```powershell
-Invoke-RestMethod 'https://nogi-relay.fly.dev/health'
+Invoke-RestMethod 'https://YOUR_APP_NAME.fly.dev/health'
 ```
 
 正常返回 `status: ok`。Fly 机器状态应显示 `app` 和 `monitor` 为 `started`，相应健康检查通过。
@@ -146,7 +146,7 @@ Invoke-RestMethod 'https://nogi-relay.fly.dev/health'
 ```powershell
 $token = Read-Host 'ACCESS_TOKEN'
 try {
-  Invoke-RestMethod -Uri 'https://nogi-relay.fly.dev/v1/devices' -Headers @{ Authorization = "Bearer $token" } | ConvertTo-Json -Depth 6
+  Invoke-RestMethod -Uri 'https://YOUR_APP_NAME.fly.dev/v1/devices' -Headers @{ Authorization = "Bearer $token" } | ConvertTo-Json -Depth 6
 } catch {
   $_.Exception.Response.StatusCode.value__
 }
@@ -226,7 +226,7 @@ monitor 会自动维护官网会话的有效性，无需人工干预：
 
 3. 使用上传脚本(推荐):
    ```powershell
-   node upload-session.js .\nogi-browser-state.json https://nogi-relay.fly.dev YOUR_ACCESS_TOKEN
+   node upload-session.js .\nogi-browser-state.json https://YOUR_APP_NAME.fly.dev YOUR_ACCESS_TOKEN
    ```
    
    上传成功后,monitor 会自动检测文件变化并**完全重启浏览器实例**,释放旧状态并加载新会话。
@@ -274,14 +274,14 @@ flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.js
 
 使用上传脚本的 status 命令:
 ```powershell
-node .\server\upload-session.js --status https://nogi-relay.fly.dev YOUR_ACCESS_TOKEN
+node .\server\upload-session.js --status https://YOUR_APP_NAME.fly.dev YOUR_ACCESS_TOKEN
 ```
 
 或使用 PowerShell 直接调用 API:
 ```powershell
 $token = 'YOUR_ACCESS_TOKEN'
 Invoke-RestMethod `
-  -Uri 'https://nogi-relay.fly.dev/v1/admin/browser-session/status' `
+  -Uri 'https://YOUR_APP_NAME.fly.dev/v1/admin/browser-session/status' `
   -Headers @{ Authorization = "Bearer $token" }
 ```
 
@@ -308,7 +308,7 @@ Authorization: Bearer YOUR_ACCESS_TOKEN
 $token = Read-Host 'ACCESS_TOKEN'
 $messageId = 'abc123'
 Invoke-WebRequest `
-  -Uri "https://nogi-relay.fly.dev/v1/messages/$messageId/media/media" `
+  -Uri "https://YOUR_APP_NAME.fly.dev/v1/messages/$messageId/media/media" `
   -Headers @{ Authorization = "Bearer $token" } `
   -OutFile "voice_$messageId.wav"
 ```
@@ -318,7 +318,7 @@ Invoke-WebRequest `
 $token = Read-Host 'ACCESS_TOKEN'
 $messageId = 'abc123'
 Invoke-WebRequest `
-  -Uri "https://nogi-relay.fly.dev/v1/messages/$messageId/media/phone_image" `
+  -Uri "https://YOUR_APP_NAME.fly.dev/v1/messages/$messageId/media/phone_image" `
   -Headers @{ Authorization = "Bearer $token" } `
   -OutFile "phone_image_$messageId.jpg"
 ```
@@ -327,14 +327,14 @@ Invoke-WebRequest `
 ```powershell
 $token = Read-Host 'ACCESS_TOKEN'
 $messages = Invoke-RestMethod `
-  -Uri 'https://nogi-relay.fly.dev/v1/messages?limit=100&type=audio' `
+  -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?limit=100&type=audio' `
   -Headers @{ Authorization = "Bearer $token" }
 
 foreach ($msg in $messages) {
   $id = $msg.id
   try {
     Invoke-WebRequest `
-      -Uri "https://nogi-relay.fly.dev/v1/messages/$id/media/media" `
+      -Uri "https://YOUR_APP_NAME.fly.dev/v1/messages/$id/media/media" `
       -Headers @{ Authorization = "Bearer $token" } `
       -OutFile "downloads/$id.wav"
     Write-Host "Downloaded: $id"
@@ -431,7 +431,7 @@ foreach ($msg in $messages) {
 
 ```powershell
 $token = Read-Host 'ACCESS_TOKEN'
-Invoke-RestMethod -Uri 'https://nogi-relay.fly.dev/v1/devices' -Headers @{ Authorization = "Bearer $token" } | ConvertTo-Json -Depth 6
+Invoke-RestMethod -Uri 'https://YOUR_APP_NAME.fly.dev/v1/devices' -Headers @{ Authorization = "Bearer $token" } | ConvertTo-Json -Depth 6
 ```
 
 返回示例:
@@ -455,7 +455,7 @@ Invoke-RestMethod -Uri 'https://nogi-relay.fly.dev/v1/devices' -Headers @{ Autho
 ```powershell
 $token = Read-Host 'ACCESS_TOKEN'
 $deviceId = Read-Host '设备 ID'
-Invoke-RestMethod -Uri "https://nogi-relay.fly.dev/v1/devices/$deviceId" -Method DELETE -Headers @{ Authorization = "Bearer $token" }
+Invoke-RestMethod -Uri "https://YOUR_APP_NAME.fly.dev/v1/devices/$deviceId" -Method DELETE -Headers @{ Authorization = "Bearer $token" }
 ```
 
 **批量清理长期未活跃设备:**
