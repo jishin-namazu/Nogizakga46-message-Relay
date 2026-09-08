@@ -34,9 +34,8 @@ async function uploadSession(sessionFilePath, serverUrl, accessToken) {
       console.log('✓ Session uploaded successfully');
       console.log(`  Path: ${result.path}`);
       console.log(`  Timestamp: ${result.timestamp}`);
-      console.log('\nNext steps:');
-      console.log('  1. Restart the monitor process to apply changes');
-      console.log('  2. Check logs to verify session is working');
+      console.log('\nThe monitor will automatically reload the new session.');
+      console.log('Check logs to verify the session is working correctly.');
       return true;
     } else {
       console.error('✗ Upload failed:', result.error);
