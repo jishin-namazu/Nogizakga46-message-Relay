@@ -9,22 +9,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
 
-/** Queues one local translation attempt per message when the feature is enabled. */
 object TranslationManager {
     private const val TAG = "NogiTranslation"
-    private const val ENDPOINT = "https://api.openai.com/v1/chat/completions"
-    private const val MODELS_ENDPOINT = "https://api.openai.com/v1/models"
-    private const val CONNECT_TIMEOUT_MS = 15_000
-    private const val READ_TIMEOUT_MS = 60_000
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val inFlight = ConcurrentHashMap.newKeySet<String>()
     private val retryAfter = ConcurrentHashMap<String, Long>()
@@ -34,8 +22,10 @@ object TranslationManager {
     fun enqueue(context: Context) {
         AppGraph.initialize(context)
         val settings = AppGraph.settings.read()
-        if (!settings.translationEnabled || settings.openAiApiKey.isBlank() || settings.openAiModel.isBlank()) return
-        val model = settings.openAiModel.trim()
+        if (!settings.translationEnabled || settings.aiApiKey.isBlank() || settings.aiModel.isBlank()) return
+        
+        val provider = AIProviderFactory.getProvider(settings.aiProvider)
+        val model = settings.aiModel.trim()
         val nickname = settings.userNickname
 
         val pending = runCatching { AppGraph.database.pendingTranslations() }.getOrNull() ?: return
@@ -51,37 +41,17 @@ object TranslationManager {
                         if (!shouldTranslate(text)) {
                             AppGraph.database.saveTranslation(message.id, null)
                         } else {
-                            val paragraphs = text
-                                .replace("\r\n", "\n")
-                                .replace('\r', '\n')
-                                .split("\n")
-                            
-                            val inputJson = JSONObject().apply {
-                                put("paragraphs", JSONArray(paragraphs))
-                            }.toString()
-                            
-                            val resultJson = requestTranslation(settings.openAiApiKey, model, inputJson)
-                                ?.trim()
-                                .orEmpty()
-                            
-                            val translatedParagraphs = runCatching {
-                                val json = JSONObject(resultJson)
-                                val array = json.getJSONArray("paragraphs")
-                                List(array.length()) { index -> array.getString(index) }
-                            }.getOrNull()
-                            
-                            val result = translatedParagraphs?.joinToString("\n").orEmpty()
-                            
-                            AppGraph.database.saveTranslation(
-                                message.id,
-                                result.takeIf { it.isNotBlank() },
-                            )
+                            val result = provider.translate(settings.aiApiKey, model, text, nickname)
+                            result.onSuccess { translation ->
+                                AppGraph.database.saveTranslation(message.id, translation.takeIf { it.isNotBlank() })
+                                retryAfter.remove(message.id)
+                                retryCount.remove(message.id)
+                            }.onFailure { error ->
+                                throw error
+                            }
                         }
-                        retryAfter.remove(message.id)
-                        retryCount.remove(message.id)
                     }
                 } catch (error: Exception) {
-                    // Keep translation_done=false so a transient API/network failure can retry later.
                     val attempts = (retryCount.merge(message.id, 1, Int::plus) ?: 1).coerceAtMost(8)
                     val delayMs = (5_000L * (1L shl (attempts - 1))).coerceAtMost(5 * 60_000L)
                     retryAfter[message.id] = System.currentTimeMillis() + delayMs
@@ -98,71 +68,10 @@ object TranslationManager {
         retryCount.clear()
     }
 
-    /** Fetches chat-capable model ids directly from OpenAI for the current API key. */
-    suspend fun fetchAvailableModels(apiKey: String): Result<List<String>> = withContext(Dispatchers.IO) {
-        runCatching {
-            require(apiKey.isNotBlank()) { "请先填写 OpenAI API Key" }
-            val connection = (URL(MODELS_ENDPOINT).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                doInput = true
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("Authorization", "Bearer ${apiKey.trim()}")
-            }
-            try {
-                val status = connection.responseCode
-                val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-                val response = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
-                if (status !in 200..299) throw IllegalStateException("OpenAI API returned HTTP $status")
-
-                val models = JSONObject(response)
-                    .optJSONArray("data")
-                    ?.let { data ->
-                        buildList {
-                            for (index in 0 until data.length()) {
-                                val id = data.optJSONObject(index)?.optString("id", "")?.trim().orEmpty()
-                                if (isChatModel(id)) add(id)
-                            }
-                        }
-                    }
-                    .orEmpty()
-                    .distinct()
-                    .sortedWith(compareBy<String> { modelSortRank(it) }.thenBy { it })
-
-                if (models.isEmpty()) throw IllegalStateException("账号没有可用的聊天模型")
-                models
-            } finally {
-                connection.disconnect()
-            }
-        }
-    }
-
-    private fun isChatModel(id: String): Boolean {
-        val normalized = id.lowercase()
-        val chatFamily = normalized.startsWith("gpt-") ||
-            normalized.startsWith("chatgpt-") ||
-            normalized.startsWith("o1") ||
-            normalized.startsWith("o3") ||
-            normalized.startsWith("o4")
-        val nonChatFamily = listOf(
-            "embedding",
-            "moderation",
-            "whisper",
-            "tts",
-            "dall-e",
-            "image",
-        ).any(normalized::contains)
-        return chatFamily && !nonChatFamily
-    }
-
-    private fun modelSortRank(id: String): Int = when {
-        id == "gpt-4o-mini" -> 0
-        id == "gpt-4.1-mini" -> 1
-        id == "gpt-4.1" -> 2
-        id == "gpt-4o" -> 3
-        id.startsWith("gpt-") -> 10
-        else -> 20
+    suspend fun fetchAvailableModels(providerType: AIProviderType, apiKey: String): Result<List<AIModel>> {
+        require(apiKey.isNotBlank()) { "请先填写 API Key" }
+        val provider = AIProviderFactory.getProvider(providerType)
+        return provider.fetchModels(apiKey)
     }
 
     private fun shouldTranslate(text: String): Boolean {
@@ -198,65 +107,6 @@ object TranslationManager {
         return hasVisibleSymbol && !hasLetterOrDigit
     }
 
-    private suspend fun requestTranslation(apiKey: String, model: String, text: String): String? = withContext(Dispatchers.IO) {
-        val request = JSONObject().apply {
-            put("model", model)
-            put("instructions", SYSTEM_PROMPT)
-            put("input", text)
-            put("store", false)
-        }.toString()
-
-        val connection = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = CONNECT_TIMEOUT_MS
-            readTimeout = READ_TIMEOUT_MS
-            doInput = true
-            doOutput = true
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            setRequestProperty("Authorization", "Bearer $apiKey")
-        }
-
-        try {
-            connection.outputStream.use { output ->
-                output.write(request.toByteArray(StandardCharsets.UTF_8))
-            }
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val response = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
-            if (status !in 200..299) {
-                val detail = runCatching {
-                    JSONObject(response).optJSONObject("error")?.optString("message", "")?.trim()
-                }.getOrNull().orEmpty()
-                throw IllegalStateException(
-                    "OpenAI Responses API returned HTTP $status${detail.takeIf { it.isNotEmpty() }?.let { ": $it" } ?: ""}",
-                )
-            }
-
-            responseOutputText(response)
-        } finally {
-            connection.disconnect()
-        }
-    }
-
-    private fun responseOutputText(response: String): String? {
-        val json = JSONObject(response)
-        json.optString("output_text", "").trim().takeIf { it.isNotEmpty() }?.let { return it }
-        val output = json.optJSONArray("output") ?: return null
-        val text = buildString {
-            for (index in 0 until output.length()) {
-                val item = output.optJSONObject(index) ?: continue
-                if (item.optString("type") != "message") continue
-                val content = item.optJSONArray("content") ?: continue
-                for (contentIndex in 0 until content.length()) {
-                    val part = content.optJSONObject(contentIndex) ?: continue
-                    if (part.optString("type") == "output_text") append(part.optString("text", ""))
-                }
-            }
-        }.trim()
-        return text.takeIf { it.isNotEmpty() }
-    }
-
     private val punctuationTypes = setOf(
         Character.CONNECTOR_PUNCTUATION.toInt(),
         Character.DASH_PUNCTUATION.toInt(),
@@ -266,23 +116,4 @@ object TranslationManager {
         Character.FINAL_QUOTE_PUNCTUATION.toInt(),
         Character.OTHER_PUNCTUATION.toInt(),
     )
-
-    private const val SYSTEM_PROMPT = """
-You are a professional Simplified Chinese native translator who fluently translates Japanese chat text into Simplified Chinese.
-
-## Input Format
-You will receive a JSON object with a "paragraphs" array containing text segments to translate.
-
-## Translation Rules
-1. Translate each paragraph in the array while preserving context across all paragraphs.
-2. Keep proper nouns, names, URLs, code, numbers, emoji, kaomoji, and other content that should not be translated.
-3. Preserve punctuation, honorific nuance, and the original tone.
-4. If a paragraph is already Chinese, contains only emoji/symbols, or has no translatable Japanese text, keep it unchanged or return empty string.
-
-## Output Format
-Return ONLY a JSON object with this exact structure:
-{"paragraphs": ["translated paragraph 1", "translated paragraph 2", ...]}
-
-The output array MUST have the same length as the input array. Do not add explanations or any text outside the JSON.
-"""
 }

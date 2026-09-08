@@ -121,6 +121,8 @@ import com.nogirelay.app.media.VoicePlaybackState
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.notification.NotificationChannels
 import com.nogirelay.app.push.PushRegistrar
+import com.nogirelay.app.translation.AIModel
+import com.nogirelay.app.translation.AIProviderType
 import com.nogirelay.app.translation.TranslationManager
 import com.nogirelay.app.translation.normalizeTranslationText
 import com.nogirelay.app.translation.substituteNickname
@@ -1268,12 +1270,15 @@ private fun SettingsScreen() {
     val initial = remember { AppGraph.settings.read() }
     var relayUrl by remember { mutableStateOf(initial.relayUrl) }
     var token by remember { mutableStateOf(initial.accessToken) }
-    var openAiApiKey by remember { mutableStateOf(initial.openAiApiKey) }
-    var openAiModel by remember { mutableStateOf(initial.openAiModel) }
-    var modelOptions by remember { mutableStateOf(emptyList<String>()) }
+    var aiProvider by remember { mutableStateOf(initial.aiProvider) }
+    var aiApiKey by remember { mutableStateOf(initial.aiApiKey) }
+    var aiModel by remember { mutableStateOf(initial.aiModel) }
+    var modelOptions by remember { mutableStateOf(emptyList<AIModel>()) }
     var translationEnabled by remember { mutableStateOf(initial.translationEnabled) }
     var userNickname by remember { mutableStateOf(initial.userNickname) }
+    var providerMenuExpanded by remember { mutableStateOf(false) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
+    var providerFieldWidthPx by remember { mutableIntStateOf(0) }
     var modelFieldWidthPx by remember { mutableIntStateOf(0) }
     var savedLabel by remember { mutableStateOf("") }
     var modelStatus by remember { mutableStateOf("") }
@@ -1282,8 +1287,9 @@ private fun SettingsScreen() {
     fun currentSettings() = AppSettings(
         relayUrl = relayUrl,
         accessToken = token,
-        openAiApiKey = openAiApiKey,
-        openAiModel = openAiModel,
+        aiProvider = aiProvider,
+        aiApiKey = aiApiKey,
+        aiModel = aiModel,
         translationEnabled = translationEnabled,
         userNickname = userNickname,
     )
@@ -1292,42 +1298,24 @@ private fun SettingsScreen() {
         AppGraph.settings.save(currentSettings())
         TranslationManager.resetRetries()
         TranslationManager.enqueue(context)
-        val key = openAiApiKey.trim()
-        if (key.isBlank()) {
-            modelStatus = "翻译设置已保存"
-            return
-        }
-        scope.launch {
-            modelStatus = "翻译设置已保存，正在加载官方模型..."
-            TranslationManager.fetchAvailableModels(key)
-                .onSuccess { models ->
-                    modelOptions = buildList {
-                        addAll(models)
-                        if (openAiModel !in models) add(0, openAiModel)
-                    }.distinct()
-                    modelStatus = "翻译设置已保存，已加载 ${models.size} 个可用模型"
-                }
-                .onFailure { error ->
-                    modelStatus = error.message ?: "翻译设置已保存，但模型加载失败"
-                }
-        }
+        savedLabel = "翻译设置已保存"
     }
 
     fun validateApiKey() {
-        val key = openAiApiKey.trim()
+        val key = aiApiKey.trim()
         if (key.isEmpty()) {
-            modelStatus = "请先填写 OpenAI API Key"
+            modelStatus = "请先填写 API Key"
             return
         }
         scope.launch {
             validatingApiKey = true
-            modelStatus = "正在从 OpenAI 验证并加载模型..."
-            val result = TranslationManager.fetchAvailableModels(key)
+            modelStatus = "正在验证并加载模型..."
+            val result = TranslationManager.fetchAvailableModels(aiProvider, key)
             validatingApiKey = false
             result.onSuccess { models ->
                 modelOptions = models
-                if (openAiModel.isBlank() && models.isNotEmpty()) {
-                    openAiModel = models.first()
+                if (aiModel.isBlank() && models.isNotEmpty()) {
+                    aiModel = models.first().id
                 }
                 modelStatus = "API Key 有效，已加载 ${models.size} 个可用模型"
             }.onFailure { error ->
@@ -1336,9 +1324,9 @@ private fun SettingsScreen() {
         }
     }
 
-    LaunchedEffect(initial.openAiApiKey) {
-        if (initial.openAiApiKey.isNotBlank()) {
-            TranslationManager.fetchAvailableModels(initial.openAiApiKey)
+    LaunchedEffect(initial.aiApiKey) {
+        if (initial.aiApiKey.isNotBlank()) {
+            TranslationManager.fetchAvailableModels(initial.aiProvider, initial.aiApiKey)
                 .onSuccess { models ->
                     modelOptions = models
                 }
@@ -1428,11 +1416,55 @@ private fun SettingsScreen() {
             )
         }
         item {
+            Box {
+                OutlinedTextField(
+                    value = aiProvider.displayName,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("AI 供应商") },
+                    trailingIcon = {
+                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择供应商")
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { providerFieldWidthPx = it.width },
+                )
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clickable { providerMenuExpanded = true },
+                )
+                DropdownMenu(
+                    expanded = providerMenuExpanded,
+                    onDismissRequest = { providerMenuExpanded = false },
+                    modifier = if (providerFieldWidthPx > 0) {
+                        Modifier.width(with(density) { providerFieldWidthPx.toDp() })
+                    } else {
+                        Modifier
+                    },
+                ) {
+                    AIProviderType.values().forEach { provider ->
+                        DropdownMenuItem(
+                            text = { Text(provider.displayName) },
+                            onClick = {
+                                aiProvider = provider
+                                aiApiKey = ""
+                                aiModel = ""
+                                modelOptions = emptyList()
+                                modelStatus = ""
+                                providerMenuExpanded = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        item {
             OutlinedTextField(
-                value = openAiApiKey,
-                onValueChange = { openAiApiKey = it },
-                label = { Text("OpenAI API Key") },
-                placeholder = { Text("sk-...") },
+                value = aiApiKey,
+                onValueChange = { aiApiKey = it },
+                label = { Text("${aiProvider.displayName} API Key") },
+                placeholder = { Text("sk-... 或对应供应商的 API Key") },
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -1469,7 +1501,7 @@ private fun SettingsScreen() {
             if (modelOptions.isNotEmpty()) {
                 Box {
                     OutlinedTextField(
-                        value = openAiModel,
+                        value = aiModel,
                         onValueChange = {},
                         readOnly = true,
                         label = { Text("翻译模型") },
@@ -1496,16 +1528,16 @@ private fun SettingsScreen() {
                     ) {
                         modelOptions.forEach { model ->
                             DropdownMenuItem(
-                                text = { Text(model) },
+                                text = { Text(model.displayName) },
                                 onClick = {
-                                    openAiModel = model
+                                    aiModel = model.id
                                     modelMenuExpanded = false
                                 },
                             )
                         }
                     }
                 }
-            } else if (openAiApiKey.isNotBlank()) {
+            } else if (aiApiKey.isNotBlank()) {
                 Text(
                     "请先点击\"校验有效性\"以加载可用模型",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
