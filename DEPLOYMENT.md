@@ -78,7 +78,17 @@ npm run bootstrap:browser
 
 生成的 state 文件包含 cookies、localStorage 和 IndexedDB，必须视为密码处理。
 
-查询 monitor 机器 ID 并上传：
+**上传会话到生产环境(推荐使用 API 方式):**
+
+```powershell
+node upload-session.js .\nogi-browser-state.json https://nogi-relay.fly.dev YOUR_ACCESS_TOKEN
+```
+
+上传成功后，monitor 会自动检测文件变化并重新加载会话，无需手动重启。
+
+**备用方式(使用 SSH):**
+
+如果 API 方式不可用，可以通过 SSH 直接上传到 monitor 机器：
 
 ```powershell
 Set-Location ..
@@ -183,10 +193,6 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
 
 **重新上传会话的步骤:**
 
-有两种方式重新上传会话:
-
-**方式 1: 使用 API 上传(推荐,无需重新部署):**
-
 1. 在本地生成新的会话文件(会自动清除旧会话):
    ```powershell
    Set-Location .\server
@@ -197,57 +203,45 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
 
 2. 在打开的浏览器窗口中完成登录,确认能看到消息后按回车保存新会话
 
-3. 使用上传脚本:
+3. 使用上传脚本(推荐):
    ```powershell
    node upload-session.js .\nogi-browser-state.json https://nogi-relay.fly.dev YOUR_ACCESS_TOKEN
    ```
+   
+   上传成功后,monitor 会自动重新加载新会话,无需手动重启。
 
-4. 重启 monitor 机器使会话生效:
+4. 观察日志确认恢复正常:
    ```powershell
-   flyctl status -a nogi-relay
-   flyctl machine restart MONITOR_MACHINE_ID -a nogi-relay
+   flyctl logs --app nogi-relay
    ```
 
-5. 观察日志确认恢复正常:
-   ```powershell
-   flyctl logs --app nogi-relay --no-tail
-   ```
+**备用方式(使用 SSH):**
 
-**方式 2: 使用 SSH 上传(传统方式):**
+如果 API 方式不可用,可以通过 SSH 直接上传:
 
-1. 在本地生成新的会话文件(同上)
-
-2. 通过 SSH 上传到 monitor 机器:
-   ```powershell
-   Set-Location ..
-   flyctl status -a nogi-relay
-   flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.json -a nogi-relay --machine MONITOR_MACHINE_ID --mode 0600
-   ```
-
-3. 重启 monitor 机器:
-   ```powershell
-   flyctl machine restart MONITOR_MACHINE_ID -a nogi-relay
-   ```
+```powershell
+Set-Location ..
+flyctl status -a nogi-relay
+flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.json -a nogi-relay --machine MONITOR_MACHINE_ID --mode 0600
+flyctl machine restart MONITOR_MACHINE_ID -a nogi-relay
+```
 
 **检查会话状态:**
+
+使用上传脚本的 status 命令:
 ```powershell
 node .\server\upload-session.js --status https://nogi-relay.fly.dev YOUR_ACCESS_TOKEN
 ```
 
-**使用 PowerShell 直接调用 API:**
+或使用 PowerShell 直接调用 API:
 ```powershell
-# 上传会话
-$token = Read-Host 'ACCESS_TOKEN'
-$session = Get-Content .\server\nogi-browser-state.json -Raw | ConvertFrom-Json
-$body = @{ session = $session } | ConvertTo-Json -Depth 10
+$token = 'YOUR_ACCESS_TOKEN'
 Invoke-RestMethod `
   -Uri 'https://nogi-relay.fly.dev/v1/admin/browser-session' `
-  -Method POST `
-  -Headers @{ Authorization = "Bearer $token" } `
-  -ContentType 'application/json' `
-  -Body $body
+  -Headers @{ Authorization = "Bearer $token" }
+```
 
-# 检查会话状态
+### 3.5 媒体文件访问
 Invoke-RestMethod `
   -Uri 'https://nogi-relay.fly.dev/v1/admin/browser-session/status' `
   -Headers @{ Authorization = "Bearer $token" }
