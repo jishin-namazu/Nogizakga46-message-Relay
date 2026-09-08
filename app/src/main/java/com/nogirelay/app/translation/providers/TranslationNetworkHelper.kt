@@ -20,7 +20,7 @@ object TranslationNetworkHelper {
             connection.connectTimeout = CONNECT_TIMEOUT_MS
             connection.readTimeout = READ_TIMEOUT_MS
             
-            provider.buildHeaders(apiKey).forEach { (key, value) ->
+            provider.buildModelHeaders(apiKey).forEach { (key, value) ->
                 connection.setRequestProperty(key, value)
             }
             

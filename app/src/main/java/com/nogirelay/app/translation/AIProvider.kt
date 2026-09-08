@@ -5,6 +5,12 @@ data class AIModel(
     val displayName: String,
 )
 
+enum class AIProtocol {
+    MESSAGES,
+    RESPONSES,
+    GEMINI_GENERATE_CONTENT,
+}
+
 enum class AIProviderType(val displayName: String) {
     OPENAI("OpenAI"),
     KIMI("Kimi (Moonshot)"),
@@ -21,12 +27,14 @@ enum class AIProviderType(val displayName: String) {
 
 interface AIProvider {
     val type: AIProviderType
+    val protocol: AIProtocol
     val baseUrl: String
     val modelsEndpoint: String
     
     suspend fun fetchModels(apiKey: String): Result<List<AIModel>>
     suspend fun translate(apiKey: String, model: String, text: String, nickname: String): Result<String>
     
+    fun buildModelHeaders(apiKey: String): Map<String, String>
     fun buildHeaders(apiKey: String): Map<String, String>
     fun buildTranslateRequest(model: String, text: String, nickname: String): String
     fun parseTranslateResponse(response: String): String
@@ -35,6 +43,8 @@ interface AIProvider {
 }
 
 abstract class BaseAIProvider : AIProvider {
+    override fun buildModelHeaders(apiKey: String): Map<String, String> = buildHeaders(apiKey)
+
     protected fun createPrompt(text: String, nickname: String): String {
         val nicknameInstruction = if (nickname.isNotBlank()) {
             "并且将成员姓名替换为\"$nickname\"（保持敬语和语气）"

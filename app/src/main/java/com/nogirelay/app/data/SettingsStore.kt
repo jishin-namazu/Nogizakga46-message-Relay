@@ -46,4 +46,3 @@ class SettingsStore(context: Context) {
         private const val KEY_PUSH_TOKEN = "push_token"
     }
 }
-

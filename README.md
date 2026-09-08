@@ -48,7 +48,7 @@ DEPLOYMENT.md           部署文档
 
 ## 安全边界
 
-Token、Firebase 服务账号、官网浏览器状态和 OpenAI API Key 都属于敏感数据，不提交到仓库。当前 API 使用共享 Bearer Token，适合私人部署；公开分发 APK 前应移除内置 Token，并改用设备级凭据。
+Token、Firebase 服务账号、官网浏览器状态和模型供应商 API Key 都属于敏感数据，不提交到仓库。当前 API 使用共享 Bearer Token，适合私人部署；公开分发 APK 前应移除内置 Token，并改用设备级凭据。
 
 ## 许可证与使用范围
 

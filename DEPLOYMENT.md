@@ -84,7 +84,12 @@ npm run bootstrap:browser
 node upload-session.js .\nogi-browser-state.json https://nogi-relay.fly.dev YOUR_ACCESS_TOKEN
 ```
 
-上传成功后，monitor 会自动检测文件变化并重新加载会话，无需手动重启。
+上传成功后，monitor 会自动检测文件变化并**完全重启浏览器实例**，无需手动重启服务。重启过程：
+1. 关闭当前浏览器实例（释放所有资源）
+2. 使用新会话文件重新打开浏览器
+3. 下次轮询自动获取新的访问令牌
+
+这种方式避免了旧浏览器状态污染，确保会话快速生效且不会阻塞健康检查。
 
 **备用方式(使用 SSH):**
 
@@ -96,7 +101,7 @@ flyctl status -a nogi-relay
 flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.json -a nogi-relay --machine MONITOR_MACHINE_ID --mode 0600
 ```
 
-上传后 monitor 会自动检测文件变化并重新加载，无需重启。会话过期后重新生成并上传；不要把 `nogi-browser-state.json` 提交到 Git。
+上传后 monitor 会自动检测文件变化并重启浏览器，无需重启服务。会话过期后重新生成并上传；不要把 `nogi-browser-state.json` 提交到 Git。
 
 ### 2.5 部署和回滚
 
@@ -163,7 +168,17 @@ flyctl logs --app nogi-relay --no-tail
 Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=...
 ```
 
-常见失效信号：
+**自动维护机制:**
+
+monitor 会自动维护官网会话的有效性，无需人工干预：
+
+1. **定时刷新 Token（每 30 分钟）:** 自动导航到官网页面获取新的访问令牌，确保 Token 不过期
+2. **定时重启浏览器（每 30 分钟）:** 释放内存并清理浏览器状态，防止内存泄漏
+3. **错误自动重试:** 如果 API 请求返回 401，会自动刷新会话并重试
+
+这些机制确保了服务的长期稳定运行。
+
+**常见失效信号:**
 
 - `Nogi API 401`：官网短期 Token 失效且页面刷新未恢复。
 - 页面没有带 Authorization 的请求：浏览器状态未登录或已过期。
@@ -176,9 +191,10 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
 
 **判断会话过期的信号:**
 
-1. **日志中出现 401 错误:**
+1. **日志中出现 401 错误或认证失败:**
    ```text
    Nogi API 401: Unauthorized
+   官网页面没有发出带 Authorization 的 API 请求，请先在浏览器会话中登录
    Error fetching member timeline
    ```
 
@@ -186,9 +202,10 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
    - 日志中 `fetched=0` 持续出现
    - 或完全没有轮询日志输出
 
-3. **浏览器状态文件失效:**
-   - 日志显示浏览器反复重启
-   - 页面没有带 Authorization 的请求
+3. **健康检查响应变慢或失败:**
+   - `/health` 接口响应时间超过 10 秒
+   - Fly.io 报告健康检查失败
+   - 这通常是因为会话刷新超时阻塞了事件循环
 
 **重新上传会话的步骤:**
 
@@ -207,11 +224,21 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
    node upload-session.js .\nogi-browser-state.json https://nogi-relay.fly.dev YOUR_ACCESS_TOKEN
    ```
    
-   上传成功后,monitor 会自动重新加载新会话,无需手动重启。
+   上传成功后,monitor 会自动检测文件变化并**完全重启浏览器实例**,释放旧状态并加载新会话。
 
 4. 观察日志确认恢复正常:
    ```powershell
    flyctl logs --app nogi-relay
+   ```
+   
+   应该看到：
+   ```text
+   检测到会话文件更新,准备重载浏览器上下文...
+   开始重载浏览器会话...
+   关闭当前浏览器实例...
+   使用新会话重新打开浏览器...
+   ✓ 浏览器会话重载成功,下次轮询将使用新会话
+   Nogi browser monitor poll complete: groups=X, fetched=X, stored=X, pushed=X
    ```
 
 **备用方式(使用 SSH):**

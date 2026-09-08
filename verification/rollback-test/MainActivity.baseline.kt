@@ -161,8 +161,6 @@ class MainActivity : ComponentActivity() {
         if (AppGraph.settings.read().relayUrl.isNotBlank()) {
             PushRegistrar.registerCurrentToken(this)
         }
-        Log.d("MainActivity", "Calling TranslationManager.enqueue from onCreate")
-        TranslationManager.enqueue(this)
         
         proximityControl = com.nogirelay.app.call.OfficialProximityScreenControl(this)
         audioManager = getSystemService(android.media.AudioManager::class.java)
@@ -1316,10 +1314,22 @@ private fun SettingsScreen() {
             validatingApiKey = false
             result.onSuccess { models ->
                 modelOptions = models
+                if (aiModel.isBlank() && models.isNotEmpty()) {
+                    aiModel = models.first().id
+                }
                 modelStatus = "API Key 有效，已加载 ${models.size} 个可用模型"
             }.onFailure { error ->
                 modelStatus = error.message ?: "API Key 无效或模型加载失败"
             }
+        }
+    }
+
+    LaunchedEffect(initial.aiApiKey) {
+        if (initial.aiApiKey.isNotBlank()) {
+            TranslationManager.fetchAvailableModels(initial.aiProvider, initial.aiApiKey)
+                .onSuccess { models ->
+                    modelOptions = models
+                }
         }
     }
 
@@ -1488,56 +1498,48 @@ private fun SettingsScreen() {
             }
         }
         item {
-            Box {
-                OutlinedTextField(
-                    value = aiModel,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("翻译模型") },
-                    placeholder = { Text("请先校验 API Key 并选择模型") },
-                    trailingIcon = {
-                        IconButton(
-                            onClick = { modelMenuExpanded = true },
-                            enabled = modelOptions.isNotEmpty(),
-                        ) {
+            if (modelOptions.isNotEmpty()) {
+                Box {
+                    OutlinedTextField(
+                        value = aiModel,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("翻译模型") },
+                        trailingIcon = {
                             Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择翻译模型")
-                        }
-                    },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onSizeChanged { modelFieldWidthPx = it.width },
-                )
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .clickable(enabled = modelOptions.isNotEmpty()) {
-                            modelMenuExpanded = true
                         },
-                )
-                DropdownMenu(
-                    expanded = modelMenuExpanded,
-                    onDismissRequest = { modelMenuExpanded = false },
-                    modifier = if (modelFieldWidthPx > 0) {
-                        Modifier.width(with(density) { modelFieldWidthPx.toDp() })
-                    } else {
-                        Modifier
-                    },
-                ) {
-                    modelOptions.forEach { model ->
-                        DropdownMenuItem(
-                            text = { Text(model.displayName) },
-                            onClick = {
-                                aiModel = model.id
-                                modelMenuExpanded = false
-                            },
-                        )
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onSizeChanged { modelFieldWidthPx = it.width },
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { modelMenuExpanded = true },
+                    )
+                    DropdownMenu(
+                        expanded = modelMenuExpanded,
+                        onDismissRequest = { modelMenuExpanded = false },
+                        modifier = if (modelFieldWidthPx > 0) {
+                            Modifier.width(with(density) { modelFieldWidthPx.toDp() })
+                        } else {
+                            Modifier
+                        },
+                    ) {
+                        modelOptions.forEach { model ->
+                            DropdownMenuItem(
+                                text = { Text(model.displayName) },
+                                onClick = {
+                                    aiModel = model.id
+                                    modelMenuExpanded = false
+                                },
+                            )
+                        }
                     }
                 }
-            }
-            if (modelOptions.isEmpty() && aiApiKey.isNotBlank()) {
+            } else if (aiApiKey.isNotBlank()) {
                 Text(
-                    "请点击\"校验有效性\"加载可用模型",
+                    "请先点击\"校验有效性\"以加载可用模型",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp
                 )

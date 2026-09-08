@@ -38,7 +38,7 @@
 - 明确点击下载后，把图片、视频或语音保存到系统 `Download` 文件夹。
 - 语音消息可显示全屏来电界面。- 语音播放支持扬声器/听筒切换,连接耳机时可强制使用扬声器。
 - 语音播放时使用距离传感器自动熄屏(听筒模式且无外接音频设备时)。
-- 播放语音时退出消息列表后重新进入,自动定位到播放消息所在页和位置。- 可在客户端使用 OpenAI API 将日文消息翻译为简体中文。
+- 播放语音时退出消息列表后重新进入,自动定位到播放消息所在页和位置。- 可在客户端使用所选模型供应商的 API 将日文消息翻译为简体中文。
 
 ## 系统架构
 
@@ -69,7 +69,7 @@ Playwright 监控进程（monitor）
                     ├── 系统通知
                     ├── 全屏语音来电
                     ├── 媒体缓存/下载
-                    └── 可选 OpenAI 翻译
+                    └── 可选多供应商模型翻译
 ```
 
 ### 新消息处理流程
@@ -101,7 +101,7 @@ nogizaka46msg/
 │       │   ├── media/                 下载与语音播放
 │       │   ├── notification/          Android 通知通道
 │       │   ├── push/                  FCM 接收和设备注册
-│       │   ├── translation/           OpenAI 翻译
+│       │   ├── translation/           多供应商模型翻译
 │       │   └── ui/                    主题、远程图片、媒体查看器
 │       └── res/                       启动图标、来电图片、铃声和启动过渡页资源
 ├── server/                           Node.js 服务端
@@ -152,7 +152,7 @@ nogizaka46msg/
 - `FIREBASE_PRIVATE_KEY_BASE64` 或 `FIREBASE_PRIVATE_KEY_JSON`。
 - `nogi-browser-state.json`：包含乃木坂46官网 cookies、localStorage 和 IndexedDB 会话。
 - `NOGI_ACCESS_TOKEN`、`NOGI_REFRESH_TOKEN` 和 `NOGI_AUTH_TKN`。
-- Android 客户端中填写的 OpenAI API Key。
+- Android 客户端中填写的模型供应商 API Key。
 
 项目的 `.gitignore` 已忽略主要敏感文件，但提交前仍应检查：
 
@@ -166,7 +166,7 @@ git status --short
 
 `ApiConfig.kt` 只包含默认服务器地址，访问令牌默认为空。开发者可以在客户端设置页输入令牌；如果仅在本机调试包中注入默认值，可在未提交的 `local.properties` 中加入 `relay.access.token=YOUR_ACCESS_TOKEN`。不要把真实令牌写入 Kotlin 源码或提交记录。
 
-设置页面中的访问令牌和 OpenAI API Key 当前保存在 Android `SharedPreferences` 中，没有额外加密。请仅在可信设备上使用。
+设置页面中的访问令牌和模型供应商 API Key 当前保存在 Android `SharedPreferences` 中，没有额外加密。请仅在可信设备上使用。
 
 ## 开发配置说明
 
@@ -673,13 +673,13 @@ subscription.state == active
 - Relay 访问令牌。
 - 保存并重新注册本机 FCM Token。
 - 启用或关闭翻译。
-- OpenAI API Key。
+- 所选模型供应商的 API Key。
 - 校验 API Key 并加载当前账号可用模型。
-- 选择翻译模型。
+- 只能从已加载的可用模型中选择翻译模型；应用不会预设或自动选择模型。
 
 ### 翻译
 
-- 翻译由 Android 客户端直接请求 OpenAI Responses API。
+- 翻译由 Android 客户端直接请求所选模型供应商。供应商支持时优先使用 Anthropic Messages API，其次使用 OpenAI Responses API；Gemini 使用原生 `generateContent` API。
 - API Key 不发送到 Nogi Relay 服务器。
 - 最多同时执行三个翻译请求。
 - 网络或 API 暂时失败时会指数退避重试，最长等待 5 分钟。

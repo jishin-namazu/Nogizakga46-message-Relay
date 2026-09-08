@@ -649,32 +649,18 @@ class NogiBrowserMonitor {
         return;
       }
 
-      await this.context?.close().catch(() => {});
+      console.log('关闭当前浏览器实例...');
+      await this.closeBrowser();
       
-      this.context = await this.browser.newContext({ storageState: newStorageState });
-      this.page = this.context.pages()[0] || await this.context.newPage();
-
-      this.page.on('request', request => this.observeRequest(request));
-      this.page.on('response', response => this.observeResponse(response));
-      
-      if (this.blockPageMedia) {
-        await this.page.route('**/*', route => {
-          const resourceType = route.request().resourceType();
-          if (['image', 'media', 'font'].includes(resourceType)) {
-            return route.abort().catch(() => {});
-          }
-          return route.continue().catch(() => {});
-        });
-      }
-
       this.accessToken = '';
       this.observedTokenAt = 0;
       this.lastFrontendNavigationAt = 0;
+      this.browserStartedAt = 0;
 
-      console.log('✓ 浏览器会话重载成功');
+      console.log('使用新会话重新打开浏览器...');
+      await this.openBrowser();
       
-      await this.refreshFrontendSession();
-      console.log('✓ 会话刷新完成,已获取新的访问令牌');
+      console.log('✓ 浏览器会话重载成功,下次轮询将使用新会话');
     } catch (error) {
       console.error('重载会话失败:', error.message);
       await recordError('monitor.reload_session', error);

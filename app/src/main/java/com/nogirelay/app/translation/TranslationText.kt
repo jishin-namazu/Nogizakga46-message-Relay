@@ -3,7 +3,7 @@ package com.nogirelay.app.translation
 private val blankLinePattern = Regex("\\n[ \\t]*\\n+")
 private val longBlankLinePattern = Regex("\\n{3,}")
 
-/** Normalizes Responses output while retaining the source message's paragraph shape. */
+/** Normalizes model output while retaining the source message's paragraph shape. */
 fun normalizeTranslationText(source: String?, translated: String?): String? {
     val value = translated
         ?.replace("%%", "\n")

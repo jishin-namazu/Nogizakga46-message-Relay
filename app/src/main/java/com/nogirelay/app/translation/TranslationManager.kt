@@ -22,27 +22,44 @@ object TranslationManager {
     fun enqueue(context: Context) {
         AppGraph.initialize(context)
         val settings = AppGraph.settings.read()
+        Log.d(TAG, "Translation enqueue called: enabled=${settings.translationEnabled}, hasApiKey=${settings.aiApiKey.isNotBlank()}, hasModel=${settings.aiModel.isNotBlank()}")
         if (!settings.translationEnabled || settings.aiApiKey.isBlank() || settings.aiModel.isBlank()) return
         
-        val provider = AIProviderFactory.getProvider(settings.aiProvider)
+        val provider = runCatching {
+            AIProviderFactory.getProvider(settings.aiProvider)
+        }.getOrElse { error ->
+            Log.w(TAG, "Invalid AI provider configuration: ${error.message}", error)
+            return
+        }
         val model = settings.aiModel.trim()
         val nickname = settings.userNickname
 
         val pending = runCatching { AppGraph.database.pendingTranslations() }.getOrNull() ?: return
+        Log.d(TAG, "Found ${pending.size} pending translations")
         val now = System.currentTimeMillis()
         pending.forEach { message ->
-            if ((retryAfter[message.id] ?: 0L) > now) return@forEach
-            if (!inFlight.add(message.id)) return@forEach
+            if ((retryAfter[message.id] ?: 0L) > now) {
+                Log.d(TAG, "Message ${message.id} waiting for retry")
+                return@forEach
+            }
+            if (!inFlight.add(message.id)) {
+                Log.d(TAG, "Message ${message.id} already in flight")
+                return@forEach
+            }
+            Log.d(TAG, "Starting translation for message ${message.id}")
             scope.launch {
                 try {
                     requestSlots.withPermit {
                         val originalText = message.text
                         val text = substituteNickname(originalText, nickname)?.trim().orEmpty()
                         if (!shouldTranslate(text)) {
+                            Log.d(TAG, "Message ${message.id} skipped (shouldTranslate=false)")
                             AppGraph.database.saveTranslation(message.id, null)
                         } else {
+                            Log.d(TAG, "Translating message ${message.id}: $text")
                             val result = provider.translate(settings.aiApiKey, model, text, nickname)
                             result.onSuccess { translation ->
+                                Log.d(TAG, "Translation success for ${message.id}")
                                 AppGraph.database.saveTranslation(message.id, translation.takeIf { it.isNotBlank() })
                                 retryAfter.remove(message.id)
                                 retryCount.remove(message.id)
@@ -68,9 +85,14 @@ object TranslationManager {
         retryCount.clear()
     }
 
-    suspend fun fetchAvailableModels(providerType: AIProviderType, apiKey: String): Result<List<AIModel>> {
+    suspend fun fetchAvailableModels(
+        providerType: AIProviderType,
+        apiKey: String,
+    ): Result<List<AIModel>> {
         require(apiKey.isNotBlank()) { "请先填写 API Key" }
-        val provider = AIProviderFactory.getProvider(providerType)
+        val provider = runCatching {
+            AIProviderFactory.getProvider(providerType)
+        }.getOrElse { return Result.failure(it) }
         return provider.fetchModels(apiKey)
     }
 

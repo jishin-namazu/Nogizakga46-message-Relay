@@ -1323,6 +1323,15 @@ private fun SettingsScreen() {
         }
     }
 
+    LaunchedEffect(initial.aiApiKey) {
+        if (initial.aiApiKey.isNotBlank()) {
+            TranslationManager.fetchAvailableModels(initial.aiProvider, initial.aiApiKey)
+                .onSuccess { models ->
+                    modelOptions = models
+                }
+        }
+    }
+
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -1508,13 +1517,6 @@ private fun SettingsScreen() {
                         .fillMaxWidth()
                         .onSizeChanged { modelFieldWidthPx = it.width },
                 )
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .clickable(enabled = modelOptions.isNotEmpty()) {
-                            modelMenuExpanded = true
-                        },
-                )
                 DropdownMenu(
                     expanded = modelMenuExpanded,
                     onDismissRequest = { modelMenuExpanded = false },
@@ -1535,7 +1537,7 @@ private fun SettingsScreen() {
                     }
                 }
             }
-            if (modelOptions.isEmpty() && aiApiKey.isNotBlank()) {
+            if (aiApiKey.isNotBlank() && modelOptions.isEmpty()) {
                 Text(
                     "请点击\"校验有效性\"加载可用模型",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

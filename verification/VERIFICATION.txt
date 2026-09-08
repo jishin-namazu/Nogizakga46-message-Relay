@@ -1,0 +1,27 @@
+Changed branch/field: translation settings model selection and provider endpoint configuration.
+
+Artifacts:
+- MODIFIED_FILE.kt
+- DIFF_FILE.diff
+- VERIFICATION.txt
+- ROLLBACK.sh
+
+BASELINE
+Command: git show HEAD:app/src/main/java/com/nogirelay/app/MainActivity.kt | Out-File verification/rollback-test/MainActivity.baseline.kt -Encoding utf8
+Input: HEAD version of MainActivity.kt
+Literal result: baseline snapshot created
+Exit status: 0
+
+MODIFIED
+Command: Copy-Item app/src/main/java/com/nogirelay/app/MainActivity.kt verification/MODIFIED_FILE.kt
+Input: working-tree MainActivity.kt
+Literal result: modified snapshot created; MODIFIED_SHA256=EB34644EA3486F48D317F5523C95FBC17902334336FCB9A1EFD2CDD1C3A6837F
+Exit status: 0
+
+ROLLBACK
+Command: bash verification/ROLLBACK.sh
+Input: verification/rollback-test/MainActivity.kt and verification/MODIFIED_FILE.kt
+Literal result: rollback restored behavior/status: PASS
+Exit status: 0
+
+Observed result: the model field is read-only and populated only from the fetched model list; custom API root URL configuration and automatic first-model selection are absent.
