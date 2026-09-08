@@ -8,10 +8,6 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
 [build]
   dockerfile = "Dockerfile"
 
-[processes]
-  app = "npm start"
-  monitor = "npm run monitor"
-
 [env]
   NODE_ENV = "production"
   LOG_STORAGE_DIR = "/data/nogi-logs"
@@ -49,7 +45,6 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
 
 [http_service]
   internal_port = 8080
-  processes = ["app"]
   force_https = true
   auto_stop_machines = false  # 不自动停止，保持运行
   auto_start_machines = true
@@ -68,13 +63,11 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
 [[mounts]]
   source = "nogi_media"
   destination = "/data"
-  processes = ["app", "monitor"]  # 两个进程都需要访问 /data
 
 # 主 API 服务
 [[services]]
   protocol = "tcp"
   internal_port = 8080
-  processes = ["app"]
 
   [[services.ports]]
     port = 80
@@ -106,7 +99,6 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
 [[services]]
   protocol = "tcp"
   internal_port = 8081
-  processes = ["monitor"]
 
   [[services.ports]]
     port = 8081
