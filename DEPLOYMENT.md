@@ -380,6 +380,20 @@ Write-Host "第1页: $($page1.messages.Count) 条, 第2页: $($page2.messages.Co
 - `thumbnail`: 缩略图（仅图片和视频有）
 - `phone_image`: 来电背景图（仅语音消息有）
 
+**查询哪些消息有来电背景图：**
+
+```powershell
+$token = Read-Host 'ACCESS_TOKEN'
+
+# 查询语音消息并查看来电背景图
+$response = Invoke-RestMethod `
+  -Uri 'https://YOUR_APP_NAME.fly.dev/v1/messages?type=audio&limit=50' `
+  -Headers @{ Authorization = "Bearer $token" }
+
+# 显示消息 ID 和背景图 URL
+$response.messages | Select-Object id, member_name, phone_image_url | Format-Table -AutoSize
+```
+
 **下载单个文件：**
 
 ```powershell
