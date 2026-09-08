@@ -14,9 +14,10 @@ import android.provider.Settings
 import android.util.Log
 import com.nogirelay.app.MainActivity
 import com.nogirelay.app.R
+import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.notification.NotificationChannels
-import com.nogirelay.app.translation.NicknameSubstitution
+import com.nogirelay.app.translation.substituteNickname
 
 object IncomingCallNotifier {
     const val EXTRA_MESSAGE_ID = "message_id"
@@ -73,7 +74,7 @@ object IncomingCallNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        val displayName = NicknameSubstitution.substitute(message.incomingCallFrom ?: message.memberName)
+        val displayName = substituteNickname(message.incomingCallFrom ?: message.memberName, AppGraph.settings.read().userNickname) ?: (message.incomingCallFrom ?: message.memberName)
         val builder = Notification.Builder(context, NotificationChannels.CALLS)
             .setSmallIcon(R.drawable.ic_notification_call)
             .setContentTitle(displayName)
@@ -128,7 +129,7 @@ object IncomingCallNotifier {
             retryIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val displayName = NicknameSubstitution.substitute(message.incomingCallFrom ?: message.memberName)
+        val displayName = substituteNickname(message.incomingCallFrom ?: message.memberName, AppGraph.settings.read().userNickname) ?: (message.incomingCallFrom ?: message.memberName)
         val notification = Notification.Builder(context, NotificationChannels.CALLS)
             .setSmallIcon(R.drawable.ic_notification_call)
             .setContentTitle(displayName)
@@ -159,7 +160,7 @@ object IncomingCallNotifier {
             com.nogirelay.app.data.MessageType.VIDEO -> "发来了一段视频"
             com.nogirelay.app.data.MessageType.TEXT -> message.text.orEmpty()
         }
-        val displayName = NicknameSubstitution.substitute(message.memberName)
+        val displayName = substituteNickname(message.memberName, AppGraph.settings.read().userNickname) ?: message.memberName
         val notification = Notification.Builder(context, NotificationChannels.MESSAGES)
             .setSmallIcon(R.drawable.ic_notification_message)
             .setContentTitle(displayName)
