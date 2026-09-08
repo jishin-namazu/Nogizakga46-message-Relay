@@ -343,7 +343,7 @@ $messages | Format-Table id, member_name, member_id, created_at, content
 ```
 
 **API 查询参数：**
-- `limit`: 返回数量（默认 20，最大 100）
+- `limit`: 返回数量（默认 50，最大 1000）
 - `offset`: 跳过前 N 条（用于分页）
 - `type`: 消息类型
   - `text`: 文字消息

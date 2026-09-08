@@ -84,7 +84,7 @@ router.get('/:id/media/:kind', async (req, res) => {
  */
 router.get('/', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit, 10) || 50;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 1000);
     const offset = parseInt(req.query.offset, 10) || 0;
     const type = req.query.type || null;
     const memberId = req.query.member_id || null;
