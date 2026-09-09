@@ -146,6 +146,7 @@ flyctl logs --app nogi-relay --no-tail
 
 - `server/start-all.sh` 先启动 API，并等待本机 `/health` 返回 `200`。
 - API 健康后才启动 monitor；monitor 再启动 8081 媒体服务和 Chromium。
+- monitor 第一次取得有效官网会话后，会逐个同步所有有效订阅成员的 `past_messages`，并沿 timeline `continuation` 拉完全部页面。首次全量同步不受常规 120 秒轮询总超时限制。
 - Fly 会在机器进入 `started` 后独立探测端口，因此应用监听前可能出现瞬时 `Health check ... failed` 日志。
 - API HTTP、API TCP 和媒体 TCP 检查均使用 30 秒 `grace_period`。它避免启动窗口导致部署失败，但不会隐藏平台首次探测日志。
 
@@ -252,6 +253,14 @@ flyctl logs --app nogi-relay --no-tail
 ```text
 Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=...
 ```
+
+每次 monitor 进程启动后的首次全量同步还会为每个成员输出：
+
+```text
+Nogi startup history fetched: group=..., timeline_pages=..., timeline_messages=..., past_messages=..., unique_messages=...
+```
+
+它先请求 `/v2/groups/{groupId}/past_messages`，然后请求最新 200 条 timeline；只要响应仍有 `continuation` 就继续请求下一页。两路结果按消息 ID 去重并写入 PostgreSQL。生产配置 `NOGI_BACKFILL_ON_START=true` 会抑制这些历史消息的 FCM 推送；数据库中已存在的消息也不会再次推送。首次同步中途失败时，完成标记不会写入，后续轮询会重新尝试。
 
 **自动维护机制:**
 

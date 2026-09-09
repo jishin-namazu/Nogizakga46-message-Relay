@@ -198,7 +198,10 @@ class NogiBrowserMonitor {
 
   async processMessage(message, sendPush) {
     try {
-      const isNew = await this.messageStore.saveMessage(message);
+      const saveResult = await this.messageStore.saveMessage(message);
+      const isNew = typeof saveResult === 'object' && saveResult !== null && 'isNew' in saveResult
+        ? Boolean(saveResult.isNew)
+        : Boolean(saveResult);
       let pushed = false;
 
       // 不推送已撤回的消息
@@ -746,29 +749,81 @@ class NogiBrowserMonitor {
       .filter(group => Number.isInteger(group.id));
   }
 
-  async fetchTimeline(groupId) {
-    const query = new URLSearchParams({
-      count: '200',
-      order: 'desc',
-      clear_unread: 'false',
-    });
+  async fetchTimelinePage(groupId, continuation = null) {
+    const query = new URLSearchParams();
+    if (continuation == null) {
+      query.set('count', '200');
+      query.set('order', 'desc');
+    } else {
+      query.set('continuation', String(continuation));
+    }
+    query.set('clear_unread', 'false');
+
     const payload = await this.apiRequest(`/v2/groups/${encodeURIComponent(groupId)}/timeline?${query}`);
     if (!payload || !Array.isArray(payload.messages)) {
       throw new Error(`Nogi API timeline response for group ${groupId} is invalid`);
+    }
+    return {
+      messages: payload.messages,
+      continuation: payload.continuation == null || payload.continuation === ''
+        ? null
+        : String(payload.continuation),
+    };
+  }
+
+  async fetchTimeline(groupId) {
+    const page = await this.fetchTimelinePage(groupId);
+    return page.messages;
+  }
+
+  async fetchAllTimeline(groupId) {
+    const firstPage = await this.fetchTimelinePage(groupId);
+    const messages = [...firstPage.messages];
+    const seenContinuations = new Set();
+    let continuation = firstPage.continuation;
+    let pageCount = 1;
+
+    while (continuation != null) {
+      if (seenContinuations.has(continuation)) {
+        throw new Error(`Nogi API timeline continuation loop detected for group ${groupId}`);
+      }
+      seenContinuations.add(continuation);
+
+      const page = await this.fetchTimelinePage(groupId, continuation);
+      messages.push(...page.messages);
+      continuation = page.continuation;
+      pageCount += 1;
+    }
+
+    return {
+      messages,
+      firstPageMessages: firstPage.messages,
+      pageCount,
+    };
+  }
+
+  async fetchPastMessages(groupId) {
+    const payload = await this.apiRequest(
+      `/v2/groups/${encodeURIComponent(groupId)}/past_messages`,
+    );
+    if (!payload || !Array.isArray(payload.messages)) {
+      throw new Error(`Nogi API past_messages response for group ${groupId} is invalid`);
     }
     return payload.messages;
   }
 
   async poll() {
     this.assertBrowserActivityAllowed();
+    const isInitialSync = !this.hasCompletedInitialPoll;
     let pollTimeout;
-    const timeoutPromise = new Promise((_, reject) => {
-      pollTimeout = setTimeout(() => reject(new Error('轮询超时(120秒)')), 120_000);
-    });
+    const timeoutPromise = isInitialSync
+      ? null
+      : new Promise((_, reject) => {
+        pollTimeout = setTimeout(() => reject(new Error('轮询超时(120秒)')), 120_000);
+      });
 
     try {
-      await Promise.race([
-        (async () => {
+      const polling = (async () => {
           const groups = await this.resolveGroups();
           if (groups.length === 0) throw new Error('No active subscribed groups found');
 
@@ -778,9 +833,33 @@ class NogiBrowserMonitor {
           let pushed = 0;
 
           for (const group of groups) {
-            const rawMessages = await this.fetchTimeline(group.id);
+            let rawMessages;
+            let currentPageMessages;
+            if (isInitialSync) {
+              const pastMessages = await this.fetchPastMessages(group.id);
+              const timeline = await this.fetchAllTimeline(group.id);
+              const seenIds = new Set();
+              rawMessages = [...timeline.messages, ...pastMessages].filter(rawMessage => {
+                const rawId = String(rawMessage.id ?? rawMessage.message_id ?? '');
+                if (!rawId || seenIds.has(rawId)) return false;
+                seenIds.add(rawId);
+                return true;
+              });
+              currentPageMessages = timeline.firstPageMessages;
+              console.log(
+                `Nogi startup history fetched: group=${group.id}, timeline_pages=${timeline.pageCount}, `
+                + `timeline_messages=${timeline.messages.length}, past_messages=${pastMessages.length}, `
+                + `unique_messages=${rawMessages.length}`,
+              );
+            } else {
+              rawMessages = await this.fetchTimeline(group.id);
+              currentPageMessages = rawMessages;
+            }
+
             const previousIds = this.groupMessageIds.get(group.id) || new Set();
-            const currentIds = new Set(rawMessages.map(rawMessage => String(rawMessage.id ?? rawMessage.message_id)));
+            const currentIds = new Set(
+              currentPageMessages.map(rawMessage => String(rawMessage.id ?? rawMessage.message_id)),
+            );
             const newMessages = rawMessages.filter(rawMessage => !previousIds.has(String(rawMessage.id ?? rawMessage.message_id)));
             const failedIds = new Set();
             fetched += newMessages.length;
@@ -806,9 +885,10 @@ class NogiBrowserMonitor {
           this.hasCompletedInitialPoll = true;
           await this.persistStorageState();
           console.log(`Nogi browser monitor poll complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
-        })(),
-        timeoutPromise,
-      ]);
+      })();
+
+      if (timeoutPromise) await Promise.race([polling, timeoutPromise]);
+      else await polling;
     } finally {
       clearTimeout(pollTimeout);
     }

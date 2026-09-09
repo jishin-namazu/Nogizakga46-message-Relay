@@ -21,7 +21,7 @@ Nogi Relay 用于接收乃木坂46官方消息，归档文字和媒体，通过 
     -> Android 客户端（SQLite、通知、全屏语音来电）
 ```
 
-服务端在一个 Fly Machine 容器内运行两个 Node.js 进程：API 进程提供 REST API 和健康检查，monitor 进程维护官网会话、轮询订阅成员、提供媒体服务并触发推送。`server/start-all.sh` 先确认 API 健康，再启动 monitor。Android 客户端在启动、回到前台或手动同步时补齐历史消息。
+服务端在一个 Fly Machine 容器内运行两个 Node.js 进程：API 进程提供 REST API 和健康检查，monitor 进程维护官网会话、轮询订阅成员、提供媒体服务并触发推送。`server/start-all.sh` 先确认 API 健康，再启动 monitor。monitor 每次进程启动都会为所有有效订阅成员导入 `past_messages`，并沿 timeline 的 `continuation` 游标拉取全部历史；后续轮询只读取最近 200 条。Android 客户端在启动、回到前台或手动同步时补齐服务器历史消息。
 
 monitor 保留当前有效访问令牌，只在令牌临近过期或官网 API 返回 `401` 时让官网页面续期，并在真实 `401` 后只重试原请求一次。官网 `/v2/update_token` 返回 `400` 时立即进入 `signedOut`，关闭 Chromium 和消息轮询，等待上传新会话；`signedOut` 期间每 5 分钟输出一次会话更新提示。其他认证失败按配置阈值隔离；REST API、健康检查和会话上传仍保持可用。
 
@@ -30,6 +30,7 @@ monitor 保留当前有效访问令牌，只在令牌临近过期或官网 API �
 ## 核心能力
 
 - 使用 Playwright 浏览器会话维护官网登录状态，支持访问令牌自动续期和会话文件在线热更新。
+- 启动时自动导入每位有效订阅成员的过去消息，并完整遍历 timeline continuation 分页。
 - 支持文字、图片、语音和视频消息。
 - 正式媒体归档到持久化卷；语音来电的背景图片保存为每条消息目录中的 `phone_image.<扩展名>`。
 - FCM 高优先级数据推送，客户端按消息 ID 去重。
