@@ -1,9 +1,17 @@
 import express from 'express';
 import fs from 'fs/promises';
-import path from 'path';
+import { randomUUID } from 'node:crypto';
 import { recordError } from '../services/error-log.js';
+import {
+  atomicWritePrivateFile,
+  atomicWritePrivateJson,
+  browserSessionPaths,
+  readJsonIfExists,
+  sessionVersion,
+} from '../services/browser-session.js';
 
 const router = express.Router();
+let sessionWriteQueue = Promise.resolve();
 
 /**
  * POST /v1/admin/browser-session
@@ -37,28 +45,36 @@ router.post('/browser-session', async (req, res) => {
 
     // Get the state file path from environment or use default
     const stateFilePath = process.env.NOGI_BROWSER_STATE_FILE || '/data/nogi-browser-state.json';
-    const stateDir = path.dirname(stateFilePath);
+    const { uploadStatusFilePath, activationStatusFilePath } = browserSessionPaths(stateFilePath);
+    const serializedSession = JSON.stringify(session, null, 2);
+    const version = sessionVersion(serializedSession);
+    const requestId = randomUUID();
+    const uploadedAt = new Date().toISOString();
 
-    // Ensure directory exists
-    try {
-      await fs.access(stateDir);
-    } catch {
-      await fs.mkdir(stateDir, { recursive: true });
-    }
+    const writeSession = async () => {
+      await atomicWritePrivateFile(stateFilePath, serializedSession);
+      await atomicWritePrivateJson(uploadStatusFilePath, { requestId, version, uploadedAt });
+    };
+    sessionWriteQueue = sessionWriteQueue.then(writeSession, writeSession);
+    await sessionWriteQueue;
 
-    // Write session to file
-    await fs.writeFile(stateFilePath, JSON.stringify(session, null, 2), 'utf8');
-
-    // Set file permissions to 0600 (owner read/write only)
-    await fs.chmod(stateFilePath, 0o600);
+    const activation = await readJsonIfExists(activationStatusFilePath).catch(() => null);
+    const activated = activation?.requestId === requestId && activation?.status === 'active';
 
     console.log(`Browser session updated: ${stateFilePath}`);
 
-    res.json({
+    res.status(activated ? 200 : 202).json({
       success: true,
-      message: 'Browser session uploaded successfully. Monitor will reload automatically.',
+      accepted: true,
+      activated,
+      activationStatus: activated ? 'active' : 'pending',
+      requestId,
+      version,
+      message: activated
+        ? 'Browser session is already active.'
+        : 'Browser session uploaded. Monitor activation is pending.',
       path: stateFilePath,
-      timestamp: new Date().toISOString(),
+      timestamp: uploadedAt,
     });
   } catch (error) {
     await recordError('server.admin.upload_browser_session', error);
@@ -76,9 +92,19 @@ router.post('/browser-session', async (req, res) => {
 router.get('/browser-session/status', async (req, res) => {
   try {
     const stateFilePath = process.env.NOGI_BROWSER_STATE_FILE || '/data/nogi-browser-state.json';
+    const { uploadStatusFilePath, activationStatusFilePath } = browserSessionPaths(stateFilePath);
 
     try {
-      const stats = await fs.stat(stateFilePath);
+      const [stats, upload, activation] = await Promise.all([
+        fs.stat(stateFilePath),
+        readJsonIfExists(uploadStatusFilePath),
+        readJsonIfExists(activationStatusFilePath),
+      ]);
+      const activated = Boolean(
+        upload?.requestId
+        && activation?.requestId === upload.requestId
+        && activation?.status === 'active',
+      );
       res.json({
         success: true,
         exists: true,
@@ -86,6 +112,21 @@ router.get('/browser-session/status', async (req, res) => {
         size: stats.size,
         lastModified: stats.mtime.toISOString(),
         lastAccessed: stats.atime.toISOString(),
+        uploadedVersion: upload?.version || null,
+        uploadedAt: upload?.uploadedAt || null,
+        activeVersion: activation?.status === 'active' ? activation.version : null,
+        activeRequestId: activation?.status === 'active' ? activation.requestId || null : null,
+        requestId: upload?.requestId || null,
+        activated,
+        activationStatus: !upload?.requestId
+          ? 'unknown'
+          : activation?.requestId === upload.requestId
+            ? activation.status
+            : 'pending',
+        activationUpdatedAt: activation?.updatedAt || null,
+        activationError: activation?.requestId === upload?.requestId && activation?.status === 'failed'
+          ? activation.error || null
+          : null,
       });
     } catch (error) {
       if (error.code === 'ENOENT') {

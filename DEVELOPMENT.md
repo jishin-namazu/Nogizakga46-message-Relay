@@ -8,7 +8,7 @@
 ### 服务器端
 
 - 使用浏览器会话登录乃木坂46官网并获取短期访问令牌。
-- 官网访问令牌每30分钟自动续期,浏览器页面自动维护刷新令牌流程。
+- 每 30 分钟重新加载官网页面验证会话；访问令牌临近过期或 API 返回 401 时由官网页面自动续期。
 - 自动读取当前账号所有处于订阅状态的成员。
 - 按成员轮询时间线并识别新消息。
 - 支持文字、图片、语音和视频消息。
@@ -260,7 +260,7 @@ monitor 进程会同时启动 8081 端口的受保护媒体服务。
 
 ### 官网访问令牌自动续期
 
-monitor 默认每 30 分钟重新加载官网页面以维护会话活跃状态。页面中的 TokenManager 自动管理短期访问令牌和刷新令牌。当访问令牌即将过期(5分钟内)时,会自动使用刷新令牌续期。
+monitor 默认每 30 分钟重新加载官网页面以验证会话并维持页面状态。刷新令牌始终由官网页面中的 TokenManager 管理；官网当前会在访问令牌接近过期（约 10 秒内）或 API 返回 401 时调用 `/v2/update_token`。monitor 不直接读取或提交刷新令牌，只监听官网后续请求中的新访问令牌。401 恢复只有在观察到不同于失效令牌的新访问令牌后才算成功。
 
 **配置项:**
 - `NOGI_BROWSER_SESSION_REFRESH_INTERVAL_MINUTES`: 页面刷新间隔(默认 30 分钟)
@@ -318,8 +318,33 @@ $token = Read-Host 'ACCESS_TOKEN'; try { Invoke-RestMethod -Uri 'https://nogi-re
 | `POST` | `/v1/push/test-message` | 是 | 发送不落服务器数据库的普通测试消息 |
 | `POST` | `/v1/push/test-call` | 是 | 发送不落服务器数据库的测试语音来电 |
 | `GET` | `/v1/push/logs` | 是 | 查询正式推送日志 |
-| `POST` | `/v1/admin/browser-session` | 是 | 上传新的浏览器会话状态,无需重新部署 |
-| `GET` | `/v1/admin/browser-session/status` | 是 | 检查浏览器会话文件状态 |
+| `POST` | `/v1/admin/browser-session` | 是 | 原子上传浏览器会话，返回待激活请求 ID |
+| `GET` | `/v1/admin/browser-session/status` | 是 | 查询最新上传请求的激活与验证状态 |
+
+### 浏览器会话热更新协议
+
+`POST /v1/admin/browser-session` 只确认会话文件已经完整、原子地写入持久卷。新上传通常返回 HTTP `202`，其中 `accepted=true`、`activated=false`、`activationStatus="pending"`。这不代表官网认证已经可用。
+
+monitor 监听会话文件所在目录，同时处理原子替换产生的 `rename` 和普通 `change` 事件。它读取一次完整快照并直接用该快照建立新浏览器上下文，不会在关闭旧上下文后再次从磁盘读取。随后 monitor 会打开官网，并以一次不自动重试的官网 API 请求验证捕获到的访问令牌：
+
+- `activating`：monitor 正在加载并验证该请求。
+- `active`：新浏览器上下文已经加载，官网 API 验证成功。
+- `failed`：加载或官网 API 验证失败；`activationError` 包含原因。
+- `pending`：文件已接受，但 monitor 尚未开始处理，或状态文件仍指向上一请求。
+
+上传和激活通过随机 `requestId` 关联，通过 SHA-256 `version` 标识会话文件内容。`GET /v1/admin/browser-session/status` 的关键字段如下：
+
+| 字段 | 说明 |
+| --- | --- |
+| `requestId` | 最新上传请求 ID |
+| `uploadedVersion` | 最新上传文件的内容版本 |
+| `activationStatus` | `pending`、`activating`、`active`、`failed` 或 `unknown` |
+| `activated` | 仅当当前请求已经验证并激活时为 `true` |
+| `activeRequestId` / `activeVersion` | 当前成功激活的请求与内容版本 |
+| `activationUpdatedAt` | monitor 最近更新时间 |
+| `activationError` | 当前请求失败时的错误信息 |
+
+`server/upload-session.js` 会在上传后轮询该状态，最多等待 90 秒；只有对应 `requestId` 进入 `active` 才以成功状态退出。
 
 ### 注册设备
 

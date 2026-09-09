@@ -7,7 +7,35 @@
  */
 
 import fs from 'fs/promises';
-import path from 'path';
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function fetchSessionStatus(serverUrl, accessToken) {
+  const response = await fetch(`${serverUrl}/v1/admin/browser-session/status`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+    },
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `Status request failed (${response.status})`);
+  return result;
+}
+
+async function waitForActivation(serverUrl, accessToken, requestId, timeoutMs = 90_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = await fetchSessionStatus(serverUrl, accessToken);
+    if (status.requestId === requestId) {
+      if (status.activationStatus === 'active' && status.activated) return status;
+      if (status.activationStatus === 'failed') {
+        throw new Error(status.activationError || 'Monitor rejected the uploaded session');
+      }
+    }
+    await sleep(2_000);
+  }
+  throw new Error('Timed out waiting for the monitor to activate the uploaded session');
+}
 
 async function uploadSession(sessionFilePath, serverUrl, accessToken) {
   try {
@@ -31,11 +59,17 @@ async function uploadSession(sessionFilePath, serverUrl, accessToken) {
     const result = await response.json();
 
     if (response.ok) {
-      console.log('✓ Session uploaded successfully');
+      console.log('✓ Session upload accepted');
       console.log(`  Path: ${result.path}`);
       console.log(`  Timestamp: ${result.timestamp}`);
-      console.log('\nThe monitor will automatically reload the new session.');
-      console.log('Check logs to verify the session is working correctly.');
+      console.log(`  Request ID: ${result.requestId}`);
+      if (!result.activated) {
+        console.log('Waiting for the monitor to activate and verify the session...');
+        const status = await waitForActivation(serverUrl, accessToken, result.requestId);
+        console.log(`✓ Session activated at ${status.activationUpdatedAt}`);
+      } else {
+        console.log('✓ Session is already active');
+      }
       return true;
     } else {
       console.error('✗ Upload failed:', result.error);
@@ -51,30 +85,21 @@ async function checkSessionStatus(serverUrl, accessToken) {
   try {
     console.log(`Checking session status: ${serverUrl}/v1/admin/browser-session/status`);
 
-    const response = await fetch(`${serverUrl}/v1/admin/browser-session/status`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-      },
-    });
+    const result = await fetchSessionStatus(serverUrl, accessToken);
 
-    const result = await response.json();
-
-    if (response.ok) {
-      if (result.exists) {
-        console.log('✓ Session file exists');
-        console.log(`  Path: ${result.path}`);
-        console.log(`  Size: ${result.size} bytes`);
-        console.log(`  Last modified: ${result.lastModified}`);
-      } else {
-        console.log('✗ Session file not found');
-        console.log(`  Expected path: ${result.path}`);
-      }
-      return true;
+    if (result.exists) {
+      console.log('✓ Session file exists');
+      console.log(`  Path: ${result.path}`);
+      console.log(`  Size: ${result.size} bytes`);
+      console.log(`  Last modified: ${result.lastModified}`);
+      console.log(`  Activation: ${result.activationStatus}`);
+      if (result.activationUpdatedAt) console.log(`  Activation updated: ${result.activationUpdatedAt}`);
+      if (result.activationError) console.log(`  Activation error: ${result.activationError}`);
     } else {
-      console.error('✗ Status check failed:', result.error);
-      return false;
+      console.log('✗ Session file not found');
+      console.log(`  Expected path: ${result.path}`);
     }
+    return true;
   } catch (error) {
     console.error('✗ Error:', error.message);
     return false;

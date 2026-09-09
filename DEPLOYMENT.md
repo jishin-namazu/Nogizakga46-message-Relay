@@ -84,12 +84,14 @@ npm run bootstrap:browser
 node upload-session.js .\nogi-browser-state.json https://YOUR_APP_NAME.fly.dev YOUR_ACCESS_TOKEN
 ```
 
-上传成功后，monitor 会自动检测文件变化并**完全重启浏览器实例**，无需手动重启服务。重启过程：
-1. 关闭当前浏览器实例（释放所有资源）
-2. 使用新会话文件重新打开浏览器
-3. 下次轮询自动获取新的访问令牌
+脚本先上传完整会话文件，然后等待 monitor 激活结果。正常输出依次为 `Session upload accepted` 和 `Session activated`；仅出现前者表示文件已经写入，但官网认证尚未验证。激活过程：
 
-这种方式避免了旧浏览器状态污染，确保会话快速生效且不会阻塞健康检查。
+1. API 使用临时文件和原子替换写入会话，并记录唯一 `requestId`。
+2. monitor 的目录监听器同时处理 `change` 和 `rename` 事件。
+3. monitor 直接使用已读取的完整快照重建浏览器上下文，旧上下文不能回写覆盖它。
+4. monitor 打开官网并执行一次官网 API 请求；成功后状态才变为 `active`。
+
+上传脚本最多等待 90 秒。状态变为 `failed` 时会输出 `activationError` 并以非零状态退出。
 
 **备用方式(使用 SSH):**
 
@@ -101,7 +103,7 @@ flyctl status -a nogi-relay
 flyctl ssh sftp put .\server\nogi-browser-state.json /data/nogi-browser-state.json -a nogi-relay --machine MONITOR_MACHINE_ID --mode 0600
 ```
 
-上传后 monitor 会自动检测文件变化并重启浏览器，无需重启服务。会话过期后重新生成并上传；不要把 `nogi-browser-state.json` 提交到 Git。
+SSH 方式也会触发目录监听器，但没有 API `requestId`，因此推荐优先使用上传脚本，以获得端到端激活确认。会话过期后重新生成并上传；不要把会话文件或配套状态文件提交到 Git。
 
 ### 2.5 机器配置
 
@@ -238,9 +240,9 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
 
 monitor 会自动维护官网会话的有效性，无需人工干预：
 
-1. **定时刷新 Token（每 30 分钟）:** 自动导航到官网页面获取新的访问令牌，确保 Token 不过期
+1. **定时验证会话（每 30 分钟）:** 自动导航到官网页面并确认页面仍能发出已认证请求；Token 未临近过期时可能继续使用原值
 2. **定时重启浏览器（每 30 分钟）:** 释放内存并清理浏览器状态，防止内存泄漏
-3. **错误自动重试:** 如果 API 请求返回 401，会自动刷新会话并重试
+3. **错误自动重试:** 如果 API 请求返回 401，会等待官网产生不同于失效令牌的新访问令牌，然后重试一次
 
 这些机制确保了服务的长期稳定运行。
 
@@ -313,14 +315,15 @@ monitor 会自动维护官网会话的有效性，无需人工干预：
    node upload-session.js .\nogi-browser-state.json https://YOUR_APP_NAME.fly.dev YOUR_ACCESS_TOKEN
    ```
    
-   上传成功后,monitor 会自动检测文件变化并**完全重启浏览器实例**,释放旧状态并加载新会话。
+   脚本只有在 monitor 完成浏览器重载和官网 API 验证后才报告成功。
    
    **自动恢复机制:**
-   - 会话文件监听器会立即检测到文件更新
+   - 目录监听器会检测原子替换产生的 `rename`/`change` 事件
    - 自动关闭旧的浏览器实例（释放所有资源和过期状态）
-   - 使用新会话重新打开浏览器
+   - 使用预先读取的完整快照重新打开浏览器，避免旧状态覆盖新文件
+   - 请求官网 API 验证新会话
    - 重置连续失败计数器为 0
-   - 下次轮询立即使用新会话开始工作
+   - 写入 `active` 或 `failed` 激活状态
    - **无需手动重启服务或机器**
 
 4. 观察日志确认恢复正常:
@@ -330,13 +333,13 @@ monitor 会自动维护官网会话的有效性，无需人工干预：
    
    应该看到：
    ```text
-   检测到会话文件更新,准备重载浏览器上下文...
+   检测到外部会话文件更新,准备重载浏览器上下文...
    开始重载浏览器会话...
    关闭当前浏览器实例...
    使用新会话重新打开浏览器...
-   ✓ 浏览器会话重载成功,监控将在下次轮询时使用新会话
-   正在刷新前端会话...
-   前端会话刷新成功
+   正在验证前端会话...
+   前端会话验证成功
+   ✓ 浏览器会话已激活并验证: <version>
    Nogi browser monitor poll complete: groups=X, fetched=X, stored=X, pushed=X
    ```
    
@@ -380,6 +383,13 @@ Invoke-RestMethod `
   -Uri 'https://YOUR_APP_NAME.fly.dev/v1/admin/browser-session/status' `
   -Headers @{ Authorization = "Bearer $token" }
 ```
+
+状态判定：
+
+- `activationStatus=active` 且 `activated=true`：最新上传已经生效。
+- `pending` 或 `activating`：稍后再次查询。
+- `failed`：查看 `activationError`，重新生成会话后再次上传。
+- `unknown`：会话文件存在，但没有 API 上传状态记录，通常来自旧版本或 SSH 上传。
 
 **安全注意事项:**
 - 会话文件包含完整登录凭证,必须妥善保管
@@ -683,10 +693,11 @@ Write-Host "`n下载完成，文件保存在 downloads 目录"
    node upload-session.js .\nogi-browser-state.json https://YOUR_APP_NAME.fly.dev YOUR_ACCESS_TOKEN
    ```
    
-   上传成功后:
-   - monitor 自动检测文件变化
+   上传并激活成功后:
+   - monitor 自动检测目录中的原子文件替换
    - 完全重启浏览器实例
    - 重置连续失败计数器
+   - 官网 API 验证通过并记录 `active`
    - 无需手动重启服务
 
 5. **观察恢复情况:**
@@ -696,10 +707,10 @@ Write-Host "`n下载完成，文件保存在 downloads 目录"
    
    成功恢复应该看到:
    ```text
-   检测到会话文件更新,准备重载浏览器上下文...
-   ✓ 浏览器会话重载成功
-   前端会话刷新成功
-   Nogi browser monitor poll complete: groups=X, fetched=X, stored=X, pushed=X
+    检测到外部会话文件更新,准备重载浏览器上下文...
+    前端会话验证成功
+    ✓ 浏览器会话已激活并验证: <version>
+    Nogi browser monitor poll complete: groups=X, fetched=X, stored=X, pushed=X
    ```
 
 6. **确认账号有有效成员订阅:**
@@ -809,12 +820,14 @@ Invoke-RestMethod 'https://YOUR_APP_NAME.fly.dev/health'
    Nogi browser monitor poll complete: groups=1, fetched=3, stored=2, pushed=2
    ```
 
-2. **会话自动刷新 (每 30 分钟):**
+2. **会话定时验证（每 30 分钟）：**
    ```text
-   正在刷新前端会话...
-   前端会话刷新成功
-   Nogi browser session supplied a refreshed access token
+   正在验证前端会话...
+   Nogi browser session validated with the current access token
+   前端会话验证成功
    ```
+
+   只有临近过期或 401 恢复时才会出现 `Nogi browser session supplied a refreshed access token`。
 
 3. **浏览器自动重启 (每 30 分钟):**
    ```text
@@ -843,19 +856,18 @@ Invoke-RestMethod 'https://YOUR_APP_NAME.fly.dev/health'
 
 **监控恢复时间线:**
 
-上传新会话后的预期恢复流程:
+上传新会话后的预期恢复流程（具体耗时取决于官网响应）：
 ```
-T+0s   : 上传脚本返回成功
-T+1s   : monitor 检测到文件变化
-T+2s   : 开始重载浏览器会话
+T+0s   : API 原子保存会话，状态为 pending
+T+1s   : monitor 检测到目录变化，状态为 activating
+T+2s   : monitor 开始重载浏览器会话
 T+5s   : 旧浏览器实例关闭
-T+10s  : 新浏览器实例打开完成
-T+15s  : 下次轮询开始(最多等待 pollIntervalMs)
-T+45s  : 首次刷新会话并获取新 token
-T+60s  : 首次成功轮询并获取消息
+T+10s  : 新浏览器实例打开并加载上传快照
+T+15s  : 官网 API 验证成功，状态变为 active，上传脚本返回成功
+T+60s内: 下一次正常轮询完成
 ```
 
-如果超过 2 分钟仍未恢复,检查日志寻找错误信息。
+上传脚本最多等待 90 秒。如果超时或返回失败，先运行 `upload-session.js --status` 查看 `activationStatus` 和 `activationError`，再检查日志。
 
 ### 设备管理
 

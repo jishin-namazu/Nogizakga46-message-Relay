@@ -36,6 +36,13 @@ apktool*.jar
 # Runtime credentials and local database files
 **/firebase-admin-key.json
 **/nogi-browser-state.json
+**/nogi-browser-state.json.upload-status.json
+**/nogi-browser-state.json.activation-status.json
+**/nogi-browser-state.json.tmp-*
 **/nogi-access-token.json
+**/nogi-access-token.json.tmp-*
 *.db
 *.db-*
+
+test_downloads/
+logs/
