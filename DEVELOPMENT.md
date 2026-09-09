@@ -8,7 +8,7 @@
 ### 服务器端
 
 - 使用浏览器会话登录乃木坂46官网并获取短期访问令牌。
-- 每 30 分钟重新加载官网页面验证会话；访问令牌临近过期或 API 返回 401 时由官网页面自动续期。
+- 保留当前有效访问令牌；临近过期时由官网页面预刷新，API 返回 401 时刷新并只重试一次。
 - 自动读取当前账号所有处于订阅状态的成员。
 - 按成员轮询时间线并识别新消息。
 - 支持文字、图片、语音和视频消息。
@@ -260,14 +260,29 @@ monitor 进程会同时启动 8081 端口的受保护媒体服务。
 
 ### 官网访问令牌自动续期
 
-monitor 默认每 30 分钟重新加载官网页面以验证会话并维持页面状态。刷新令牌始终由官网页面中的 TokenManager 管理；官网当前会在访问令牌接近过期（约 10 秒内）或 API 返回 401 时调用 `/v2/update_token`。monitor 不直接读取或提交刷新令牌，只监听官网后续请求中的新访问令牌。401 恢复只有在观察到不同于失效令牌的新访问令牌后才算成功。
+刷新令牌始终由官网页面中的 TokenManager 管理；官网当前会在访问令牌接近过期（约 10 秒内）或 API 返回 401 时调用 `/v2/update_token`。monitor 不再定时清空有效 token 或仅凭页面未发请求判定失效；预刷新失败时仍尝试当前 token，真实 401 只触发一次新 token 刷新和原请求重试。
+
+当 `/v2/update_token` 返回 HTTP `400` 时，monitor 立即进入 `signedOut`，并同时进入 `authPaused`：关闭 Chromium、停止官网认证请求和消息轮询、删除失效 access-token 缓存，但保留健康检查、管理接口、媒体服务和会话文件监听。`signedOut` 期间立即输出一次退出告警，之后每 5 分钟输出 `[NOGI_SESSION_UPDATE_REQUIRED]`，直到新会话通过官网 API 验证。其他 `/v2/update_token` 4xx/5xx 按连续失败次数累计，达到阈值后进入 `authPaused`；成功响应会清零计数。
+
+### 服务启动时序
+
+容器由 `server/start-all.sh` 编排两个服务阶段：
+
+1. 后台启动 `npm start`，API 完成 Firebase 初始化、数据库兼容迁移和清理任务后监听 `PORT`。
+2. 启动脚本轮询 `http://127.0.0.1:${PORT}/health`；未返回成功时不会启动 monitor。
+3. `/health` 成功后前台启动 `npm run monitor`，由 monitor 再启动 8081 媒体服务和 Chromium。
+
+Fly.io 的端口检查由平台在机器进入 `started` 后独立发起，可能早于应用监听端口并记录瞬时失败。`fly.toml` 中 API、媒体 TCP 检查和 API HTTP 检查均设置了 30 秒 `grace_period`；这能避免启动窗口造成部署失败，但不会隐藏平台产生的首次探测日志。
 
 **配置项:**
-- `NOGI_BROWSER_SESSION_REFRESH_INTERVAL_MINUTES`: 页面刷新间隔(默认 30 分钟)
 - `NOGI_BROWSER_RESTART_INTERVAL_SECONDS`: 浏览器进程重启间隔(默认 1800 秒)
+- `NOGI_MAX_TOKEN_REFRESH_FAILURES`: `/v2/update_token` 非 400 失败进入认证暂停前允许的连续次数（默认 3）
+- `NOGI_MAX_AUTH_FAILURES`: 兼容旧配置名；未设置前者时作为回退值
 
 **会话失效信号:**
-- 日志中出现 `Nogi API 401: Unauthorized`
+- 日志中出现 `[NOGI_AUTH_SIGNED_OUT]` 或 `/v2/update_token 返回 400`
+- `signedOut` 期间每 5 分钟出现 `[NOGI_SESSION_UPDATE_REQUIRED]`
+- 日志中出现 `Nogi API 401: Unauthorized`（表示业务请求触发了刷新路径）
 - monitor 停止获取新消息 (`fetched=0`)
 - 此时需要重新生成并上传浏览器会话文件
 

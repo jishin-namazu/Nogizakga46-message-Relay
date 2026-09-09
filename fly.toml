@@ -35,7 +35,7 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
   NOGI_BROWSER_AUTH_WAIT_SECONDS = "30"
   NOGI_BROWSER_SETTLE_SECONDS = "8"
   NOGI_BROWSER_BLOCK_MEDIA = "true"
-  NOGI_BROWSER_SESSION_REFRESH_INTERVAL_MINUTES = "30"
+  NOGI_MAX_TOKEN_REFRESH_FAILURES = "3"
   NOGI_BROWSER_RESTART_INTERVAL_SECONDS = "1800"
   NOGI_MEDIA_PORT = "8081"
   MEDIA_STORAGE_DIR = "/data/nogi-media"
@@ -75,12 +75,12 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
   [[services.tcp_checks]]
     interval = "15s"
     timeout = "20s"
-    grace_period = "5s"
+    grace_period = "30s"
 
   [[services.http_checks]]
     interval = "30s"
     timeout = "5s"
-    grace_period = "10s"
+    grace_period = "30s"
     method = "get"
     path = "/health"
     protocol = "http"
@@ -102,5 +102,5 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
   [[services.tcp_checks]]
     interval = "30s"
     timeout = "5s"
-    grace_period = "10s"
+    grace_period = "30s"
     port = 8081

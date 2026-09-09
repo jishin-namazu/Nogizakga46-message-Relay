@@ -142,6 +142,23 @@ Invoke-RestMethod 'https://YOUR_APP_NAME.fly.dev/health'
 flyctl logs --app nogi-relay --no-tail
 ```
 
+**启动顺序和 Fly 健康检查:**
+
+- `server/start-all.sh` 先启动 API，并等待本机 `/health` 返回 `200`。
+- API 健康后才启动 monitor；monitor 再启动 8081 媒体服务和 Chromium。
+- Fly 会在机器进入 `started` 后独立探测端口，因此应用监听前可能出现瞬时 `Health check ... failed` 日志。
+- API HTTP、API TCP 和媒体 TCP 检查均使用 30 秒 `grace_period`。它避免启动窗口导致部署失败，但不会隐藏平台首次探测日志。
+
+部署验收：
+
+```powershell
+flyctl status --app nogi-relay
+flyctl checks list --app nogi-relay
+Invoke-RestMethod 'https://YOUR_APP_NAME.fly.dev/health'
+```
+
+正常结果是机器 `started`、checks `3/3 passing`、`/health` 返回 `status=ok`。只要最终 checks 全部 passing，启动前几秒的 failed 记录不属于持续服务故障。
+
 需要回滚时先列出历史版本，再选择已验证的镜像版本：
 
 ```powershell
@@ -207,7 +224,7 @@ phone_image.<扩展名>
 Invoke-RestMethod 'https://YOUR_APP_NAME.fly.dev/health'
 ```
 
-正常返回 `status: ok`。Fly 机器状态应显示 `app` 和 `monitor` 为 `started`，相应健康检查通过。
+正常返回 `status: ok`。Fly 机器状态应显示单个 `app` 进程组为 `started` 且 checks 全部通过；API 与 monitor 是该容器内的两个 Node.js 进程。
 
 ### 3.2 验证 Relay API Token
 
@@ -240,15 +257,17 @@ Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=
 
 monitor 会自动维护官网会话的有效性，无需人工干预：
 
-1. **定时验证会话（每 30 分钟）:** 自动导航到官网页面并确认页面仍能发出已认证请求；Token 未临近过期时可能继续使用原值
+1. **按官网逻辑刷新:** 保留当前有效 Token；临近过期时预刷新，真实 401 时等待官网产生不同的新 Token，并只重试原请求一次
 2. **定时重启浏览器（每 30 分钟）:** 释放内存并清理浏览器状态，防止内存泄漏
-3. **错误自动重试:** 如果 API 请求返回 401，会等待官网产生不同于失效令牌的新访问令牌，然后重试一次
+3. **认证状态隔离:** `/v2/update_token` 返回 `400` 时立即进入 `signedOut`；其他 4xx/5xx 连续达到 `NOGI_MAX_TOKEN_REFRESH_FAILURES`（默认 3）后进入 `authPaused`。两种状态都会关闭 Chromium 并停止官网轮询，只等待新会话文件。`signedOut` 期间每 5 分钟输出一次 `[NOGI_SESSION_UPDATE_REQUIRED]`。
 
 这些机制确保了服务的长期稳定运行。
 
 **常见失效信号:**
 
-- `Nogi API 401`：官网短期 Token 失效且页面刷新未恢复。
+- `[NOGI_AUTH_SIGNED_OUT]` 或 `/v2/update_token 返回 400`：官网会话已退出，立即进入 `signedOut`。
+- `[NOGI_SESSION_UPDATE_REQUIRED]`：会话仍处于 `signedOut`，需要上传新会话文件。
+- `Nogi API 401`：业务请求触发了刷新路径，不单独代表最终失效。
 - 页面没有带 Authorization 的请求：浏览器状态未登录或已过期。
 - `No active subscribed groups found`：没有有效订阅或账号配置不匹配。
 - 浏览器反复重启：重新生成并上传 state 文件。
@@ -260,9 +279,10 @@ monitor 会自动维护官网会话的有效性，无需人工干预：
 
 **判断会话过期的信号:**
 
-1. **日志中出现 401 错误或认证失败:**
+1. **日志中出现会话状态或认证错误:**
    ```text
-   Nogi API 401: Unauthorized
+   [NOGI_AUTH_SIGNED_OUT] /v2/update_token 返回 400，会话已退出。
+   [NOGI_SESSION_UPDATE_REQUIRED] 会话已退出，需要更新会话文件。
    官网页面没有发出带 Authorization 的 API 请求，请先在浏览器会话中登录
    Error fetching member timeline
    ```
@@ -275,28 +295,22 @@ monitor 会自动维护官网会话的有效性，无需人工干预：
    - 日志中 `fetched=0` 持续出现
    - 或完全没有轮询日志输出
 
-4. **健康检查响应变慢或失败:**
-   - `/health` 接口响应时间超过 10 秒
-   - Fly.io 报告健康检查失败
-   - 这通常是因为会话刷新超时阻塞了事件循环
-
-5. **连续失败次数告警（新增）:**
-   - 前 9 次认证失败时会看到:
+4. **认证状态告警:**
+   - `/v2/update_token` 返回 400 时立即显示:
      ```text
-     会话过期或认证失败 (第 1/10 次),等待新的会话文件上传。
-     会话过期或认证失败 (第 2/10 次),等待新的会话文件上传。
-     ...
+     [NOGI_AUTH_SIGNED_OUT] /v2/update_token 返回 400，会话已退出。
      ```
-   - 连续失败 10 次后会显示醒目告警:
+   - `signedOut` 期间每 5 分钟显示:
      ```text
-     ╔═════════════════════════════════════════════════════════════════╗
-     ║  ⚠️  会话已过期且连续失败 10 次                             ║
-     ║  请立即上传新的浏览器会话文件以恢复监控功能                 ║
-     ║  使用命令: node upload-session.js <session-file> <url> <token> ║
-     ║  监控已暂停，等待新会话文件...                              ║
-     ╚═════════════════════════════════════════════════════════════════╝
+     [NOGI_SESSION_UPDATE_REQUIRED] 会话已退出，需要更新会话文件。
      ```
-   - 此时监控已暂停，不再频繁重试，避免日志刷屏
+   - 其他刷新错误连续达到 `NOGI_MAX_TOKEN_REFRESH_FAILURES`（默认 3）后显示:
+     ```text
+     [NOGI_AUTH_PAUSED] 官网 access token 已失效，且无法通过官网获取新 token。
+     已停止 Chromium、官网认证请求和消息轮询；HTTP 健康检查、管理接口、媒体服务及会话文件监听保持运行。
+     请上传新的浏览器会话文件；新会话通过官网 API 验证后，监控会自动恢复。
+     ```
+   - 结构化错误 scope 为 `monitor.auth_paused`，context 中包含 `requires_session_update=true`；400 还包含 `auth_state=signedOut`
 
 **重新上传会话的步骤:**
 
@@ -322,7 +336,7 @@ monitor 会自动维护官网会话的有效性，无需人工干预：
    - 自动关闭旧的浏览器实例（释放所有资源和过期状态）
    - 使用预先读取的完整快照重新打开浏览器，避免旧状态覆盖新文件
    - 请求官网 API 验证新会话
-   - 重置连续失败计数器为 0
+   - 重置 `/v2/update_token` 连续失败计数器为 0，并清除 `signedOut`/`authPaused`
    - 写入 `active` 或 `failed` 激活状态
    - **无需手动重启服务或机器**
 
@@ -343,7 +357,7 @@ monitor 会自动维护官网会话的有效性，无需人工干预：
    Nogi browser monitor poll complete: groups=X, fetched=X, stored=X, pushed=X
    ```
    
-   如果之前已经连续失败 10 次，上传新会话后会自动恢复正常轮询，不再显示告警。
+   如果之前已经进入 `[NOGI_AUTH_PAUSED]`，上传的新会话通过验证后会自动恢复正常轮询，不再显示告警。
 
 **⚠️ 重要：多设备登录互斥**
 
@@ -651,8 +665,9 @@ Write-Host "`n下载完成，文件保存在 downloads 目录"
 
 **症状:**
 - 查看 monitor 日志中的 401、会话和订阅错误
-- 日志中出现 `会话过期或认证失败` 或 `Nogi API 401`
-- 连续失败 10 次后出现告警框提示上传新会话
+- 日志中出现 `[NOGI_AUTH_SIGNED_OUT]` 或 `Nogi API 401`
+- `/v2/update_token` 返回 400 后出现 `[NOGI_SESSION_UPDATE_REQUIRED]`
+- 其他刷新错误达到阈值后出现 `[NOGI_AUTH_PAUSED]`
 - `fetched=0` 持续出现或完全没有轮询日志
 
 **排查步骤:**
@@ -673,7 +688,7 @@ Write-Host "`n下载完成，文件保存在 downloads 目录"
    - `官网页面没有发出带 Authorization 的 API 请求` - 会话未登录或已过期
    - `Nogi API 401` - Token 无效,需要刷新会话
    - `No active subscribed groups found` - 账号无有效订阅
-   - `连续失败 X/10 次` - 接近告警阈值,需尽快处理
+   - `连续失败 X/3 次` - 接近默认告警阈值,需尽快处理
 
 3. **检查是否在其他设备登录过:**
    - 官网网页端登录是互斥的
@@ -696,7 +711,7 @@ Write-Host "`n下载完成，文件保存在 downloads 目录"
    上传并激活成功后:
    - monitor 自动检测目录中的原子文件替换
    - 完全重启浏览器实例
-   - 重置连续失败计数器
+   - 重置 `/v2/update_token` 连续失败计数器并清除认证暂停状态
    - 官网 API 验证通过并记录 `active`
    - 无需手动重启服务
 
@@ -719,7 +734,7 @@ Write-Host "`n下载完成，文件保存在 downloads 目录"
 
 **预防措施:**
 - 定期检查监控日志,关注失败次数
-- 看到 `第 5/10 次` 以上时应及时处理
+- 看到连续认证失败时应及时准备新会话文件
 - 避免在其他浏览器登录官网
 - 建议每月主动更新一次会话文件
 
@@ -820,14 +835,7 @@ Invoke-RestMethod 'https://YOUR_APP_NAME.fly.dev/health'
    Nogi browser monitor poll complete: groups=1, fetched=3, stored=2, pushed=2
    ```
 
-2. **会话定时验证（每 30 分钟）：**
-   ```text
-   正在验证前端会话...
-   Nogi browser session validated with the current access token
-   前端会话验证成功
-   ```
-
-   只有临近过期或 401 恢复时才会出现 `Nogi browser session supplied a refreshed access token`。
+2. **访问令牌按需刷新：** 只有临近过期或 401 恢复时才会出现 `Nogi browser session supplied a refreshed access token`；有效 Token 不再触发定时页面验证。
 
 3. **浏览器自动重启 (每 30 分钟):**
    ```text
@@ -847,8 +855,8 @@ Invoke-RestMethod 'https://YOUR_APP_NAME.fly.dev/health'
 
 | 症状 | 可能原因 | 处理方法 |
 |------|---------|---------|
-| 日志中出现 `会话过期或认证失败 (第 X/10 次)` | 会话即将过期或已过期 | X < 5 时观察即可,X ≥ 5 时准备上传新会话 |
-| 出现告警框 `连续失败 10 次` | 会话完全失效 | 立即上传新会话文件 |
+| 日志中出现 `[NOGI_SESSION_UPDATE_REQUIRED]` | 会话已进入 `signedOut` | 上传新会话文件 |
+| 出现 `[NOGI_AUTH_PAUSED]` | 会话已确认失效，官网刷新失败 | 上传新会话文件；无需重启服务 |
 | `fetched=0` 持续多次 | 会话过期或无新消息 | 检查会话状态和订阅 |
 | 无轮询日志输出超过 5 分钟 | 进程卡死或崩溃 | 检查机器状态,必要时重启 |
 | 健康检查超时或 502 | 事件循环阻塞 | 查看日志,可能需要上传新会话或重启 |

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const { NogiWebMonitor } = await import('../src/monitor/nogi-web.js');
+const { NogiBrowserMonitor } = await import('../src/monitor/nogi-browser.js');
 const { setErrorLogDbWriter } = await import('../src/services/error-log.js');
-const { isTransientDatabaseError } = await import('../src/db/index.js');
+const { isTransientDatabaseError, pool } = await import('../src/db/index.js');
 
 setErrorLogDbWriter(null);
+test.after(() => pool.end());
 
 test('classifies database startup and connection timeout errors as transient', () => {
   assert.equal(isTransientDatabaseError(Object.assign(
@@ -19,22 +20,22 @@ test('classifies database startup and connection timeout errors as transient', (
 test('keeps a message eligible when persistence fails', async () => {
   let saveAttempts = 0;
   let pushAttempts = 0;
-  const monitor = new NogiWebMonitor({
+  const monitor = new NogiBrowserMonitor({
     messageStore: {
       async saveMessage() {
         saveAttempts += 1;
         if (saveAttempts === 1) throw new Error('temporary database outage');
-        return { isNew: true, message: { id: 'retry-1', type: 'text' } };
+        return true;
       },
-      async getMessage() { return null; },
     },
     pusher: {
-      async smartPush() {
+      async pushMessage() {
         pushAttempts += 1;
-        return { success: true };
       },
     },
   });
+  monitor.hasCompletedInitialPoll = true;
+  monitor.persistStorageState = async () => {};
   monitor.resolveGroups = async () => [{ id: 48, name: '一ノ瀬 美空', phone_image: null, thumbnail: null }];
   monitor.fetchTimeline = async () => [{
     id: 'retry-1',
