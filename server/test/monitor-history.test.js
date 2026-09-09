@@ -133,5 +133,70 @@ test('initial poll imports past messages and every timeline page without pushes'
   assert.deepEqual(savedIds, ['0', '1', '2', '3']);
   assert.equal(pushCount, 0);
   assert.equal(monitor.hasCompletedInitialPoll, true);
+  assert.deepEqual([...monitor.backfilledGroupIds], [47]);
   assert.deepEqual([...monitor.groupMessageIds.get(47)], ['3', '2']);
+});
+
+test('a newly subscribed group receives the same complete history backfill', async () => {
+  const savedIds = [];
+  let pushCount = 0;
+  const pastGroups = [];
+  const fullTimelineGroups = [];
+  const regularTimelineGroups = [];
+  const monitor = new NogiBrowserMonitor({
+    messageStore: {
+      async saveMessage(message) {
+        savedIds.push(message.id);
+        return { message, isNew: true };
+      },
+    },
+    pusher: {
+      async pushMessage() {
+        pushCount += 1;
+      },
+    },
+  });
+  monitor.hasCompletedInitialPoll = true;
+  monitor.historyBackfillReason = null;
+  monitor.backfilledGroupIds.add(47);
+  monitor.groupMessageIds.set(47, new Set(['47-current']));
+  monitor.persistStorageState = async () => {};
+  monitor.resolveGroups = async () => [
+    { id: 47, name: 'Existing member', phone_image: null, thumbnail: null },
+    { id: 48, name: 'New member', phone_image: null, thumbnail: null },
+  ];
+  monitor.fetchTimeline = async groupId => {
+    regularTimelineGroups.push(groupId);
+    return [{
+      id: '47-current',
+      type: 'text',
+      published_at: '2026-02-01T00:00:00Z',
+    }];
+  };
+  monitor.fetchPastMessages = async groupId => {
+    pastGroups.push(groupId);
+    return [{
+      id: '48-past',
+      type: 'text',
+      published_at: '2026-01-01T00:00:00Z',
+    }];
+  };
+  monitor.fetchAllTimeline = async groupId => {
+    fullTimelineGroups.push(groupId);
+    const firstPageMessages = [{
+      id: '48-current',
+      type: 'text',
+      published_at: '2026-02-01T00:00:00Z',
+    }];
+    return { messages: firstPageMessages, firstPageMessages, pageCount: 1 };
+  };
+
+  await monitor.poll();
+
+  assert.deepEqual(regularTimelineGroups, [47]);
+  assert.deepEqual(pastGroups, [48]);
+  assert.deepEqual(fullTimelineGroups, [48]);
+  assert.deepEqual(savedIds, ['48-past', '48-current']);
+  assert.equal(pushCount, 0);
+  assert.deepEqual([...monitor.backfilledGroupIds], [47, 48]);
 });

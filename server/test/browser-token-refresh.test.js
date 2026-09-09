@@ -324,6 +324,8 @@ test('session reload activates the already-read snapshot and records verificatio
   const monitor = createMonitor();
   monitor.storageStateFile = path.join(directory, 'state.json');
   monitor.authPaused = true;
+  monitor.backfilledGroupIds.add(47);
+  monitor.historyBackfillReason = null;
   const uploadedState = { cookies: [], origins: [{ origin: 'https://message.nogizaka46.com' }] };
   const serialized = JSON.stringify(uploadedState);
   let openedWith = null;
@@ -358,6 +360,8 @@ test('session reload activates the already-read snapshot and records verificatio
   assert.equal(activation.version, sessionVersion(serialized));
   assert.equal(activation.status, 'active');
   assert.equal(monitor.authPaused, false);
+  assert.deepEqual([...monitor.backfilledGroupIds], []);
+  assert.equal(monitor.historyBackfillReason, 'session_reload');
   assert.ok(Number.isFinite(Date.parse(activation.updatedAt)));
 });
 

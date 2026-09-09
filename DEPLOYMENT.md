@@ -90,6 +90,7 @@ node upload-session.js .\nogi-browser-state.json https://YOUR_APP_NAME.fly.dev Y
 2. monitor 的目录监听器同时处理 `change` 和 `rename` 事件。
 3. monitor 直接使用已读取的完整快照重建浏览器上下文，旧上下文不能回写覆盖它。
 4. monitor 打开官网并执行一次官网 API 请求；成功后状态才变为 `active`。
+5. 激活成功会清空成员历史回填完成标记；下一轮为全部当前有效订阅成员重新导入 `past_messages` 并遍历 timeline continuation。
 
 上传脚本最多等待 90 秒。状态变为 `failed` 时会输出 `activationError` 并以非零状态退出。
 
@@ -146,7 +147,7 @@ flyctl logs --app nogi-relay --no-tail
 
 - `server/start-all.sh` 先启动 API，并等待本机 `/health` 返回 `200`。
 - API 健康后才启动 monitor；monitor 再启动 8081 媒体服务和 Chromium。
-- monitor 第一次取得有效官网会话后，会逐个同步所有有效订阅成员的 `past_messages`，并沿 timeline `continuation` 拉完全部页面。首次全量同步不受常规 120 秒轮询总超时限制。
+- monitor 第一次取得有效官网会话、发现新订阅成员或成功激活更新后的会话文件时，会同步相应成员的 `past_messages`，并沿 timeline `continuation` 拉完全部页面。包含历史回填的轮询不受常规 120 秒轮询总超时限制。
 - Fly 会在机器进入 `started` 后独立探测端口，因此应用监听前可能出现瞬时 `Health check ... failed` 日志。
 - API HTTP、API TCP 和媒体 TCP 检查均使用 30 秒 `grace_period`。它避免启动窗口导致部署失败，但不会隐藏平台首次探测日志。
 
@@ -254,13 +255,13 @@ flyctl logs --app nogi-relay --no-tail
 Nogi browser monitor poll complete: groups=..., fetched=..., stored=..., pushed=...
 ```
 
-每次 monitor 进程启动后的首次全量同步还会为每个成员输出：
+每次成员全量同步还会按触发原因输出：
 
 ```text
-Nogi startup history fetched: group=..., timeline_pages=..., timeline_messages=..., past_messages=..., unique_messages=...
+Nogi history fetched: reason=startup|new_subscription|session_reload, group=..., timeline_pages=..., timeline_messages=..., past_messages=..., unique_messages=...
 ```
 
-它先请求 `/v2/groups/{groupId}/past_messages`，然后请求最新 200 条 timeline；只要响应仍有 `continuation` 就继续请求下一页。两路结果按消息 ID 去重并写入 PostgreSQL。生产配置 `NOGI_BACKFILL_ON_START=true` 会抑制这些历史消息的 FCM 推送；数据库中已存在的消息也不会再次推送。首次同步中途失败时，完成标记不会写入，后续轮询会重新尝试。
+它先请求 `/v2/groups/{groupId}/past_messages`，然后请求最新 200 条 timeline；只要响应仍有 `continuation` 就继续请求下一页。两路结果按消息 ID 去重并写入 PostgreSQL。生产配置 `NOGI_BACKFILL_ON_START=true` 会抑制启动、新订阅和会话更新触发的历史消息 FCM；数据库中已存在的消息也不会再次推送。单个成员同步或持久化中途失败时不会写入该成员的完成标记，后续轮询会重新尝试。
 
 **自动维护机制:**
 

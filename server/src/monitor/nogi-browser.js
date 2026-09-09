@@ -137,6 +137,8 @@ class NogiBrowserMonitor {
     this.observedTokenAt = 0;
     this.lastPersistedAccessToken = '';
     this.hasCompletedInitialPoll = false;
+    this.backfilledGroupIds = new Set();
+    this.historyBackfillReason = 'startup';
     this.groupMessageIds = new Map();
     this.groups = new Map();
     this.sessionFileWatcher = null;
@@ -815,8 +817,16 @@ class NogiBrowserMonitor {
   async poll() {
     this.assertBrowserActivityAllowed();
     const isInitialSync = !this.hasCompletedInitialPoll;
+    const groups = await this.resolveGroups();
+    if (groups.length === 0) throw new Error('No active subscribed groups found');
+
+    const activeGroupIds = new Set(groups.map(group => group.id));
+    for (const groupId of this.backfilledGroupIds) {
+      if (!activeGroupIds.has(groupId)) this.backfilledGroupIds.delete(groupId);
+    }
+    const hasHistoryBackfill = groups.some(group => !this.backfilledGroupIds.has(group.id));
     let pollTimeout;
-    const timeoutPromise = isInitialSync
+    const timeoutPromise = hasHistoryBackfill
       ? null
       : new Promise((_, reject) => {
         pollTimeout = setTimeout(() => reject(new Error('轮询超时(120秒)')), 120_000);
@@ -824,18 +834,16 @@ class NogiBrowserMonitor {
 
     try {
       const polling = (async () => {
-          const groups = await this.resolveGroups();
-          if (groups.length === 0) throw new Error('No active subscribed groups found');
-
-          const sendPush = this.hasCompletedInitialPoll || !this.backfillOnStart;
           let fetched = 0;
           let stored = 0;
           let pushed = 0;
 
           for (const group of groups) {
+            const shouldBackfillHistory = !this.backfilledGroupIds.has(group.id);
+            const sendPush = shouldBackfillHistory ? !this.backfillOnStart : true;
             let rawMessages;
             let currentPageMessages;
-            if (isInitialSync) {
+            if (shouldBackfillHistory) {
               const pastMessages = await this.fetchPastMessages(group.id);
               const timeline = await this.fetchAllTimeline(group.id);
               const seenIds = new Set();
@@ -846,8 +854,12 @@ class NogiBrowserMonitor {
                 return true;
               });
               currentPageMessages = timeline.firstPageMessages;
+              const backfillReason = isInitialSync
+                ? 'startup'
+                : this.historyBackfillReason || 'new_subscription';
               console.log(
-                `Nogi startup history fetched: group=${group.id}, timeline_pages=${timeline.pageCount}, `
+                `Nogi history fetched: reason=${backfillReason}, group=${group.id}, `
+                + `timeline_pages=${timeline.pageCount}, `
                 + `timeline_messages=${timeline.messages.length}, past_messages=${pastMessages.length}, `
                 + `unique_messages=${rawMessages.length}`,
               );
@@ -880,9 +892,20 @@ class NogiBrowserMonitor {
               group.id,
               new Set([...currentIds].filter(id => !failedIds.has(id))),
             );
+            if (shouldBackfillHistory) {
+              if (failedIds.size > 0) {
+                throw new Error(
+                  `Nogi history persistence failed for group ${group.id}: ${failedIds.size} message(s)`,
+                );
+              }
+              this.backfilledGroupIds.add(group.id);
+            }
           }
 
           this.hasCompletedInitialPoll = true;
+          if (groups.every(group => this.backfilledGroupIds.has(group.id))) {
+            this.historyBackfillReason = null;
+          }
           await this.persistStorageState();
           console.log(`Nogi browser monitor poll complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
       })();
@@ -1101,6 +1124,9 @@ class NogiBrowserMonitor {
         { retryAuth: false, sessionActivation: true },
       );
       this.resumeAuthentication();
+      this.backfilledGroupIds.clear();
+      this.historyBackfillReason = 'session_reload';
+      console.log('Nogi history backfill scheduled after browser session activation');
 
       await atomicWritePrivateJson(activationStatusFilePath, {
         requestId,

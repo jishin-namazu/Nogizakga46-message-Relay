@@ -35,6 +35,7 @@ test('keeps a message eligible when persistence fails', async () => {
     },
   });
   monitor.hasCompletedInitialPoll = true;
+  monitor.backfilledGroupIds.add(48);
   monitor.persistStorageState = async () => {};
   monitor.resolveGroups = async () => [{ id: 48, name: '一ノ瀬 美空', phone_image: null, thumbnail: null }];
   monitor.fetchTimeline = async () => [{
