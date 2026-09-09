@@ -200,11 +200,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             put(
                 "translation",
                 translation
-                    ?.replace("%%", "\n")
-                    ?.replace("\r\n", "\n")
-                    ?.replace('\r', '\n')
-                    ?.trim()
-                    ?.takeIf { it.isNotEmpty() },
+                    ?.takeIf { it.isNotBlank() },
             )
             put("translation_done", 1)
         }

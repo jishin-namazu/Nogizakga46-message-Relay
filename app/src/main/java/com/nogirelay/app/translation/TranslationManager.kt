@@ -51,13 +51,16 @@ object TranslationManager {
                 try {
                     requestSlots.withPermit {
                         val originalText = message.text
-                        val text = substituteNickname(originalText, nickname)?.trim().orEmpty()
+                        val text = substituteNickname(originalText, nickname).orEmpty()
                         if (!shouldTranslate(text)) {
                             Log.d(TAG, "Message ${message.id} skipped (shouldTranslate=false)")
                             AppGraph.database.saveTranslation(message.id, null)
                         } else {
                             Log.d(TAG, "Translating message ${message.id}: $text")
-                            val result = provider.translate(settings.aiApiKey, model, text, nickname)
+                            val layout = TranslationLayout.from(text)
+                            val result = provider
+                                .translate(settings.aiApiKey, model, layout.requestPayload, nickname)
+                                .mapCatching(layout::restore)
                             result.onSuccess { translation ->
                                 Log.d(TAG, "Translation success for ${message.id}")
                                 AppGraph.database.saveTranslation(message.id, translation.takeIf { it.isNotBlank() })

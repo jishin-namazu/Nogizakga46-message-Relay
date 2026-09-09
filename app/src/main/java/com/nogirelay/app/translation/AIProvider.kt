@@ -45,10 +45,21 @@ interface AIProvider {
 abstract class BaseAIProvider : AIProvider {
     override fun buildModelHeaders(apiKey: String): Map<String, String> = buildHeaders(apiKey)
 
+    @Suppress("UNUSED_PARAMETER")
     protected fun createPrompt(text: String, nickname: String): String {
-        val nicknameInstruction = if (nickname.isNotBlank()) {
-            "并且将成员姓名替换为\"$nickname\"（保持敬语和语气）"
-        } else ""
-        return "将以下日语消息翻译成简体中文$nicknameInstruction，保持原文的语气和情感，直接输出译文，不要添加任何解释：\n\n$text"
+        return """
+            你将收到一条完整日语消息，以及按原文顺序排列的文本片段。请结合完整消息的上下文，将所有文本片段翻译成简体中文。
+
+            要求：
+            1. 人名必须保持原文，不得翻译、音译、改写或替换。
+            2. 对于不应翻译的内容（例如专有名词、代码等），请保留原文。
+            3. 每个输入片段必须对应一个输出片段，不得合并、拆分、遗漏或增加片段。
+            4. 输出片段的数量和顺序必须与输入完全一致，每个片段内部不得添加换行。
+            5. 保持原文的语气和情感。
+            6. 只输出合法的 JSON 字符串数组，不要输出 Markdown、代码块或任何解释。
+
+            输入：
+            $text
+        """.trimIndent()
     }
 }

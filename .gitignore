@@ -5,6 +5,7 @@
 local.properties
 build/
 **/build/
+app/src/test/
 captures/
 .externalNativeBuild/
 .cxx/
