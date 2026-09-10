@@ -135,6 +135,7 @@ import com.nogirelay.app.ui.NogiRelayTheme
 import com.nogirelay.app.ui.RemoteImage
 import com.nogirelay.app.ui.SignalCoral
 import com.nogirelay.app.ui.SignalGreen
+import com.nogirelay.app.ui.withoutTextPresentationSelector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -161,6 +162,12 @@ class MainActivity : ComponentActivity() {
         // The launch theme mirrors the official app splash until Compose draws its first frame.
         setTheme(R.style.Theme_NogiRelay)
         AppGraph.initialize(this)
+        if (BuildConfig.SIMPLE_UI) {
+            // The simplified build hides the relay fields, so the values baked in
+            // at build time stay authoritative even if older settings existed.
+            val current = AppGraph.settings.read()
+            AppGraph.settings.save(current.copy(relayUrl = ApiConfig.BASE_URL, accessToken = ApiConfig.ACCESS_TOKEN))
+        }
         NotificationChannels.create(this)
         AppGraph.database.deleteTestMessages().forEach { IncomingCallNotifier.cancel(this, it) }
         if (AppGraph.settings.read().relayUrl.isNotBlank()) {
@@ -1127,6 +1134,7 @@ private fun threadPreview(message: RelayMessage): String = when (message.type) {
     MessageType.AUDIO -> "语音消息"
     MessageType.VIDEO -> "视频消息"
 }.let { fallback -> message.text?.trim()?.takeIf { it.isNotEmpty() } ?: fallback }
+    .withoutTextPresentationSelector()
 
 @Composable
 private fun MessageCard(
@@ -1194,7 +1202,7 @@ private fun MessageCard(
             message.text?.takeIf { it.isNotBlank() }?.let {
                 Spacer(Modifier.height(12.dp))
                 SelectionContainer {
-                    Text(substituteNickname(it, userNickname) ?: it)
+                    Text((substituteNickname(it, userNickname) ?: it).withoutTextPresentationSelector())
                 }
             }
             if (translationEnabled) {
@@ -1202,7 +1210,7 @@ private fun MessageCard(
                     Spacer(Modifier.height(7.dp))
                     SelectionContainer {
                         Text(
-                            text = it,
+                            text = it.withoutTextPresentationSelector(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 15.sp,
                         )
@@ -1431,30 +1439,36 @@ private fun SettingsScreen() {
         item {
             Text("FCM 推送服务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "应用启动或回到前台时会同步缺失的历史消息；保存后也会把本机 FCM Token 注册到 HTTPS 服务。",
+                if (BuildConfig.SIMPLE_UI) {
+                    "应用启动或回到前台时会同步缺失的历史消息；点击下方按钮把本机 FCM Token 注册到服务器。"
+                } else {
+                    "应用启动或回到前台时会同步缺失的历史消息；保存后也会把本机 FCM Token 注册到 HTTPS 服务。"
+                },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
             )
         }
-        item {
-            OutlinedTextField(
-                value = relayUrl,
-                onValueChange = { relayUrl = it },
-                label = { Text("同步服务地址") },
-                placeholder = { Text("https://relay.example.com") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                label = { Text("访问令牌") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
+        if (!BuildConfig.SIMPLE_UI) {
+            item {
+                OutlinedTextField(
+                    value = relayUrl,
+                    onValueChange = { relayUrl = it },
+                    label = { Text("同步服务地址") },
+                    placeholder = { Text("https://relay.example.com") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            item {
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    label = { Text("访问令牌") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
         item {
             Button(
@@ -1474,7 +1488,7 @@ private fun SettingsScreen() {
             ) {
                 Icon(Icons.Rounded.Save, contentDescription = null)
                 Spacer(Modifier.size(8.dp))
-                Text("保存并注册推送")
+                Text(if (BuildConfig.SIMPLE_UI) "注册推送" else "保存并注册推送", maxLines = 1)
             }
         }
         item {

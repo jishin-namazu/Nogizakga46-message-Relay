@@ -109,7 +109,7 @@ nogizaka46msg/
 │       │   ├── notification/          Android 通知通道
 │       │   ├── push/                  FCM 接收和设备注册
 │       │   ├── translation/           多供应商模型翻译
-│       │   └── ui/                    主题、远程图片、媒体查看器
+│       │   └── ui/                    主题、远程图片、媒体查看器、显示文本处理
 │       └── res/                       启动图标、来电图片、铃声和启动过渡页资源
 ├── server/                           Node.js 服务端
 │   ├── src/
@@ -175,7 +175,7 @@ git status --short
 
 ### 客户端配置注意事项
 
-`ApiConfig.kt` 只包含默认服务器地址，访问令牌默认为空。开发者可以在客户端设置页输入令牌；如果仅在本机调试包中注入默认值，可在未提交的 `local.properties` 中加入 `relay.access.token=YOUR_ACCESS_TOKEN`。不要把真实令牌写入 Kotlin 源码或提交记录。
+`ApiConfig.kt` 自身不含默认服务器地址或访问令牌：两者都来自本机构建配置 `local.properties`（键名 `relay.baseUrl` 与 `relay.access.token`），且默认都是空。因此普通构建不会预填地址、也不会内置令牌，使用者在设置页自行填写；只有本机调试包才注入默认值。不要把真实令牌写入 Kotlin 源码或提交记录。
 
 设置页面中的访问令牌和模型供应商 API Key 当前保存在 Android `SharedPreferences` 中，没有额外加密。请仅在可信设备上使用。
 
@@ -735,6 +735,7 @@ subscription.state == active
 - 搜索会查询该成员本地数据库中的全部消息，然后对结果分页。
 - 翻页或搜索变化后自动回到顶部。
 - 点击普通消息通知会直接进入对应成员和分页，并把通知对应消息显示为顶部第一条；完成这一次定位后，后续页面导航不会再次定位到它。
+- 显示消息原文、译文、会话预览和通知正文前会移除 U+FE0E（VS15 文本呈现选择符）：部分系统缺少对应的单色字形，会把 `☺︎` 这类序列渲染成豆腐块，移除后回退到普通或 emoji 字形；本机数据库存储和翻译请求仍保留原文。
 
 成员入口由本机最近 200 条非测试消息生成；进入成员后的分页和搜索会查询该成员的全部本地消息。因此消息量非常大时，较久未发消息且不在最近 200 条中的成员可能不会出现在入口列表，这是实现限制。
 
@@ -775,14 +776,28 @@ java -version
 .\gradlew.bat :app:assembleDebug --no-daemon
 ```
 
-默认构建不会把 Relay Token 写入 APK。需要仅在本机调试包中提供默认 Token 时，在未提交的 `local.properties` 中保留以下配置（`local.properties` 已被忽略）：
+默认构建既不会预填服务器地址，也不会把 Relay Token 写入 APK（`DEFAULT_RELAY_URL` 和 `RELAY_ACCESS_TOKEN` 的默认值都是空）。只有需要本机调试包预置时，才在未提交的 `local.properties` 中保留以下配置（该文件已被忽略）：
 
 ```properties
 sdk.dir=C:/Users/YOUR_USER/AppData/Local/Android/Sdk
+relay.baseUrl=https://YOUR_RELAY_HOST
 relay.access.token=YOUR_ACCESS_TOKEN
 ```
 
-正式或共享 APK 不应注入 Token，应在应用设置页填写设备使用的 Token。
+正式或共享 APK 不应预置地址或注入 Token，应在应用设置页填写。
+
+### 两种构建模式
+
+构建期属性 `relaySimpleUi`（生成 `BuildConfig.SIMPLE_UI`）控制客户端设置页的形态，默认 `false`：
+
+| 模式 | 命令 | 设置页行为 |
+| --- | --- | --- |
+| 完整版（默认） | `.\gradlew.bat :app:assembleDebug --no-daemon` | 显示“同步服务地址”和“访问令牌”输入框，按钮为“保存并注册推送”；不预填任何值 |
+| 简化版 | `.\gradlew.bat :app:assembleDebug -PrelaySimpleUi=true --no-daemon` | 隐藏上述两个输入框，按钮只显示“注册推送”；启动时把注入的地址和令牌写入本机设置并锁定 |
+
+简化版必须配合 `local.properties` 中的 `relay.baseUrl` 与 `relay.access.token`，否则没有可用的服务器地址。两种模式的差异只影响设置页和该次构建的预置值，不影响消息同步、翻译、来电等其它功能。
+
+注意：`relay.baseUrl` / `relay.access.token` 会被编译进 APK，任何人都能从包里提取，不要公开分发这类调试包；构建完成后建议把这两项从 `local.properties` 删除，保持后续构建干净。
 
 项目使用 JDK 17、compileSdk 34，调试包由 Android Gradle Plugin 生成。若本机 JDK 17 安装在其他目录，只需相应调整 `JAVA_HOME`。
 
@@ -862,7 +877,7 @@ $deviceId = 'YOUR_DEVICE_ID'
 1. 通知权限已允许。
 2. Android 14 的全屏通知权限已允许。
 3. 设置页面中的服务器地址和访问令牌正确。
-4. 点击“保存并注册推送”，页面显示设备已注册。
+4. 点击推送按钮（完整版为“保存并注册推送”，简化版为“注册推送”），页面显示设备已注册。
 5. 对 OPPO、vivo、小米等系统，允许自启动、后台运行并关闭不必要的电池限制。
 
 如果构建时项目根目录没有 `app/google-services.json`，应用仍可安装和浏览已同步数据，但 FCM 初始化与推送注册会失败；需要从 Firebase 项目下载与包名 `com.nogirelay.app` 匹配的配置文件后重新构建。

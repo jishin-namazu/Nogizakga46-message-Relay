@@ -51,7 +51,7 @@ DEPLOYMENT.md           部署文档
 
 ## 安全边界
 
-Token、Firebase 服务账号、官网浏览器状态和模型供应商 API Key 都属于敏感数据，不提交到仓库。当前 API 使用共享 Bearer Token，适合私人部署；公开分发 APK 前应移除内置 Token，并改用设备级凭据。
+Token、Firebase 服务账号、官网浏览器状态和模型供应商 API Key 都属于敏感数据，不提交到仓库。当前 API 使用共享 Bearer Token，适合私人部署；APK 的服务器地址和访问令牌都是构建期可选项（由本机 `local.properties` 注入，默认留空），公开分发前不要预置地址或内置令牌，应让使用者在设置页填写。
 
 ## 许可证与使用范围
 

@@ -5,16 +5,18 @@ import com.nogirelay.app.BuildConfig
 /**
  * API 配置
  *
- * 部署信息：
- * - 服务器地址：https://nogi-relay.fly.dev
- * - Firebase Project ID：nogizaka46-relay
+ * 默认服务器地址和访问令牌都来自本机构建配置（未提交的 local.properties）：
+ * - relay.baseUrl      -> BuildConfig.DEFAULT_RELAY_URL
+ * - relay.access.token -> BuildConfig.RELAY_ACCESS_TOKEN
  *
- * ACCESS_TOKEN 默认为空。开发者可以在客户端设置页输入，或在本机
- * 未提交的 local.properties 中设置 relay.access.token 后构建调试包。
+ * 两者默认为空，因此普通构建既不会预填服务器地址，也不会内置访问令牌。
+ * 需要为特定构建预置时，在本机 local.properties 中提供上述两项后构建。
+ * 不要把真实令牌写入受版本控制的源码。
  */
 object ApiConfig {
-    // Fly.io 部署的服务器地址
-    const val BASE_URL = "https://nogi-relay.fly.dev"
+    // Optional local build-time default; empty means "prefill nothing".
+    val BASE_URL: String
+        get() = BuildConfig.DEFAULT_RELAY_URL
 
     // Optional local build-time value; never commit a real token to source.
     val ACCESS_TOKEN: String

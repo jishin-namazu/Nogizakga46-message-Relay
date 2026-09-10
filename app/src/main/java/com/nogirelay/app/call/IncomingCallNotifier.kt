@@ -18,6 +18,7 @@ import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.notification.NotificationChannels
 import com.nogirelay.app.translation.substituteNickname
+import com.nogirelay.app.ui.withoutTextPresentationSelector
 
 object IncomingCallNotifier {
     const val EXTRA_MESSAGE_ID = "message_id"
@@ -159,7 +160,7 @@ object IncomingCallNotifier {
             com.nogirelay.app.data.MessageType.AUDIO -> "发来了一条语音"
             com.nogirelay.app.data.MessageType.VIDEO -> "发来了一段视频"
             com.nogirelay.app.data.MessageType.TEXT -> message.text.orEmpty()
-        }
+        }.withoutTextPresentationSelector()
         val displayName = substituteNickname(message.memberName, AppGraph.settings.read().userNickname) ?: message.memberName
         val notification = Notification.Builder(context, NotificationChannels.MESSAGES)
             .setSmallIcon(R.drawable.ic_notification_message)

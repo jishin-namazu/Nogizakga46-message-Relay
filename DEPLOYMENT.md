@@ -1035,7 +1035,7 @@ vivo / OriginOS      -> vivo Push
 
 - 只实现 FCM，尚未接入 OPPO、vivo、小米或华为系统推送。
 - API 使用单个共享 Token，没有用户级身份和权限体系。
-- 默认构建不注入 Relay Token（API 令牌默认为空）；只有在未提交的 `local.properties` 中提供 `relay.access.token` 时才会被编译进包内，带内置令牌的调试包不适合公开分发。
+- 默认构建不预置服务器地址、也不注入 Relay Token（`BuildConfig.DEFAULT_RELAY_URL` 与 `RELAY_ACCESS_TOKEN` 默认为空）；只有在未提交的 `local.properties` 中提供 `relay.baseUrl` / `relay.access.token` 时才会被编译进包内，带内置地址或令牌的调试包不适合公开分发。
 - 服务端消息列表没有总数、游标和完整参数范围校验。
 - FCM 无效设备 Token 需要运维清理。
 - 客户端历史同步没有固定页数上限，历史很大时会连续请求并可能触发 `/v1/*` 15 分钟 100 次的限流。

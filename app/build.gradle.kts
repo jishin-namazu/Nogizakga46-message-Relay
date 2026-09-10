@@ -16,6 +16,20 @@ val relayAccessTokenLiteral = relayAccessToken
     .replace("\r", "\\r")
     .replace("\n", "\\n")
 
+// Opt-in simplified UI for a one-off personal build: hides the relay address
+// and access token fields so the values injected through local.properties are
+// never displayed. Enabled with -PrelaySimpleUi=true; default builds are unchanged.
+val relaySimpleUi = (project.findProperty("relaySimpleUi") as String?)?.trim()?.toBoolean() ?: false
+// Optional build-time default relay address. Empty (the default) means a plain
+// build prefills nothing, so no server address is baked into the APK.
+val relayBaseUrl = localProperties.getProperty("relay.baseUrl").orEmpty()
+val relayBaseUrlLiteral = relayBaseUrl
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+    .replace("\r", "\\r")
+    .replace("\n", "\\n")
+
+
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
@@ -31,7 +45,9 @@ android {
         versionCode = 10
         versionName = "0.5.5"
 
+        buildConfigField("String", "DEFAULT_RELAY_URL", "\"$relayBaseUrlLiteral\"")
         buildConfigField("String", "RELAY_ACCESS_TOKEN", "\"$relayAccessTokenLiteral\"")
+        buildConfigField("boolean", "SIMPLE_UI", relaySimpleUi.toString())
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
