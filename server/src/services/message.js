@@ -148,29 +148,6 @@ class MessageService {
   }
 
   /**
-   * 获取未播放的语音消息数量
-   */
-  async getUnplayedAudioCount() {
-    const result = await db.queryOne(
-      `SELECT COUNT(*) as count FROM messages
-       WHERE ${NON_TEST_MESSAGE}
-         AND type = 'audio' AND is_played = false AND incoming_call_from IS NOT NULL`
-    );
-    return parseInt(result.count, 10);
-  }
-
-  /**
-   * 删除旧消息（清理任务）
-   */
-  async deleteOldMessages(daysToKeep = 30) {
-    const result = await db.query(
-      `DELETE FROM messages
-       WHERE created_at < NOW() - INTERVAL '${daysToKeep} days'`
-    );
-    return result.rowCount;
-  }
-
-  /**
    * 获取消息统计
    */
   async getStatistics() {

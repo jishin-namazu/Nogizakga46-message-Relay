@@ -28,24 +28,6 @@ export function authenticate(req, res, next) {
 }
 
 /**
- * 可选认证中间件（不强制要求 token）
- */
-export function optionalAuth(req, res, next) {
-  const authHeader = req.headers.authorization;
-
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.substring(7);
-
-    if (token === process.env.ACCESS_TOKEN) {
-      // Token 有效，设置用户信息
-      // req.user = { id: 'user_id', ... };
-    }
-  }
-
-  next();
-}
-
-/**
  * 错误处理中间件
  */
 export function errorHandler(err, req, res, next) {

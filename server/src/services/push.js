@@ -1,4 +1,4 @@
-import { sendPushNotification, sendMulticastPush } from './firebase.js';
+import { sendMulticastPush } from './firebase.js';
 import deviceService from './device.js';
 import db from '../db/index.js';
 
@@ -24,24 +24,6 @@ class PushService {
 
     // 记录推送日志
     await this.logPushResults(message.id, tokens, result);
-
-    return result;
-  }
-
-  /**
-   * 向单个设备推送
-   */
-  async pushToDevice(deviceId, message) {
-    const device = await deviceService.getDevice(deviceId);
-
-    if (!device) {
-      return { success: false, error: 'Device not found' };
-    }
-
-    const result = await sendPushNotification(device.fcm_token, message);
-
-    // 记录推送日志
-    await this.logPush(message.id, deviceId, result);
 
     return result;
   }
@@ -124,23 +106,6 @@ class PushService {
     } else {
       return await this.pushMessage(message, userId);
     }
-  }
-
-  /**
-   * 记录推送日志
-   */
-  async logPush(messageId, deviceId, result) {
-    await db.query(
-      `INSERT INTO push_logs (message_id, device_id, fcm_message_id, status, error_message)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        messageId,
-        deviceId,
-        result.messageId || null,
-        result.success ? 'success' : 'failed',
-        result.error || null,
-      ]
-    );
   }
 
   /**

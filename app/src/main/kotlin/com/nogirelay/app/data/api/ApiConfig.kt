@@ -19,15 +19,4 @@ object ApiConfig {
     // Optional local build-time value; never commit a real token to source.
     val ACCESS_TOKEN: String
         get() = BuildConfig.RELAY_ACCESS_TOKEN
-
-    // API 版本
-    const val API_VERSION = "v1"
-
-    // 超时配置（秒）
-    const val CONNECT_TIMEOUT = 30L
-    const val READ_TIMEOUT = 30L
-    const val WRITE_TIMEOUT = 30L
-
-    // 是否启用日志
-    const val ENABLE_LOGGING = true
 }

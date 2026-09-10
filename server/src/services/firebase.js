@@ -8,7 +8,7 @@ dotenv.config();
 
 let firebaseApp = null;
 
-function pushPayload(message) {
+export function pushPayload(message) {
   const mediaUrl = message.media_local_path
     ? mediaArchive.publicUrl(message.id, 'media')
     : message.media_url;
@@ -35,6 +35,35 @@ function pushPayload(message) {
     ringtone_url: message.ringtone_url,
     is_played: message.is_played,
   };
+}
+
+// FCM caps the entire data map at 4096 bytes. Measure encoded UTF-8 bytes,
+// never JavaScript string length (UTF-16 code units), and keep a margin so an
+// oversized message degrades to message_id/type instead of failing the whole
+// multicast. The client then falls back to GET /v1/messages/:id.
+const FCM_DATA_LIMIT_BYTES = 4096;
+const FCM_DATA_SAFETY_MARGIN_BYTES = 256;
+
+export function buildDataPayload(message, includePayload) {
+  const data = {
+    message_id: message.id,
+    type: message.type,
+  };
+
+  if (!includePayload) return data;
+
+  const payload = JSON.stringify(pushPayload(message));
+  const candidate = { ...data, payload };
+  const encodedBytes = Buffer.byteLength(JSON.stringify(candidate), 'utf8');
+  if (encodedBytes <= FCM_DATA_LIMIT_BYTES - FCM_DATA_SAFETY_MARGIN_BYTES) {
+    return candidate;
+  }
+
+  console.log(
+    `FCM inline payload omitted for message ${message.id}: `
+    + `${Buffer.byteLength(payload, 'utf8')} UTF-8 bytes exceeds the safe data budget`,
+  );
+  return data;
 }
 
 /**
@@ -80,50 +109,6 @@ export function initializeFirebase() {
 }
 
 /**
- * 发送 FCM 推送通知
- * @param {string} token - FCM 设备 token
- * @param {object} message - 消息对象
- * @param {boolean} includePayload - 是否在 data 中包含完整 payload
- */
-export async function sendPushNotification(token, message, includePayload = true) {
-  if (!firebaseApp) {
-    initializeFirebase();
-  }
-
-  const data = {
-    message_id: message.id,
-    type: message.type,
-  };
-
-  // 如果消息不大，直接携带完整 payload
-  if (includePayload) {
-    const payload = JSON.stringify(pushPayload(message));
-
-    // FCM data 字段有大小限制（4KB），检查 payload 大小
-    if (payload.length < 3800) {
-      data.payload = payload;
-    }
-  }
-
-  const fcmMessage = {
-    data,
-    android: {
-      priority: 'high', // 高优先级，确保及时送达
-    },
-    token,
-  };
-
-  try {
-    const response = await admin.messaging().send(fcmMessage);
-    console.log('FCM push sent successfully:', response);
-    return { success: true, messageId: response };
-  } catch (error) {
-    await recordError('firebase.push', error, { message_id: message.id, token_present: Boolean(token) });
-    return { success: false, error: error.message };
-  }
-}
-
-/**
  * 批量发送推送
  * @param {Array<string>} tokens - FCM tokens 数组
  * @param {object} message - 消息对象
@@ -137,16 +122,7 @@ export async function sendMulticastPush(tokens, message) {
     return { success: false, error: 'No tokens provided' };
   }
 
-  const data = {
-    message_id: message.id,
-    type: message.type,
-  };
-
-  const payload = JSON.stringify(pushPayload(message));
-
-  if (payload.length < 3800) {
-    data.payload = payload;
-  }
+  const data = buildDataPayload(message, true);
 
   const multicastMessage = {
     data,
@@ -173,6 +149,5 @@ export async function sendMulticastPush(tokens, message) {
 
 export default {
   initializeFirebase,
-  sendPushNotification,
   sendMulticastPush,
 };

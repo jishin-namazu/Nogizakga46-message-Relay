@@ -148,41 +148,10 @@ export async function queryAll(text, params) {
   return res.rows;
 }
 
-/**
- * 事务执行
- */
-export async function transaction(callback) {
-  return await runWithRetry(async () => {
-    const client = await pool.connect();
-    let commitStarted = false;
-    try {
-      await client.query('BEGIN');
-      const result = await callback(client);
-      commitStarted = true;
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      if (!commitStarted) await client.query('ROLLBACK').catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
-  }, { scope: 'database.transaction' });
-}
-
-/**
- * 关闭连接池
- */
-export async function close() {
-  await pool.end();
-}
-
 export default {
   query,
   queryOne,
   queryAll,
-  transaction,
-  close,
   pool
 };
 

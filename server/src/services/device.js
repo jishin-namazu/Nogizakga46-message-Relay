@@ -51,16 +51,6 @@ class DeviceService {
   }
 
   /**
-   * 获取设备详情
-   */
-  async getDevice(deviceId) {
-    return await db.queryOne(
-      'SELECT * FROM devices WHERE id = $1',
-      [deviceId]
-    );
-  }
-
-  /**
    * 删除设备
    */
   async deleteDevice(deviceId) {
@@ -69,27 +59,6 @@ class DeviceService {
       [deviceId]
     );
     return result.rowCount > 0;
-  }
-
-  /**
-   * 通过 FCM token 删除设备
-   */
-  async deleteDeviceByToken(fcmToken) {
-    const result = await db.query(
-      'DELETE FROM devices WHERE fcm_token = $1',
-      [fcmToken]
-    );
-    return result.rowCount > 0;
-  }
-
-  /**
-   * 更新设备最后活跃时间
-   */
-  async updateLastSeen(fcmToken) {
-    await db.query(
-      'UPDATE devices SET last_seen_at = CURRENT_TIMESTAMP WHERE fcm_token = $1',
-      [fcmToken]
-    );
   }
 
   /**

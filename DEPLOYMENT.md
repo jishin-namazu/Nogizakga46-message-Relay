@@ -2,7 +2,7 @@
 
 本文件面向部署和维护人员,覆盖生产环境配置、Fly.io 部署、官网会话管理、推送验证和故障排查。
 
-开发环境配置、代码结构、API 细节、环境变量完整列表请查看 [DEVELOPMENT.md](DEVELOPMENT.md)。
+开发环境配置、代码结构和 API 细节请查看 [DEVELOPMENT.md](DEVELOPMENT.md)；完整环境变量见下文第 1 节。
 
 ## 1. 生产环境必需配置
 
@@ -15,7 +15,55 @@
 | `FIREBASE_PROJECT_ID` | Firebase 项目 ID |
 | `FIREBASE_PRIVATE_KEY_BASE64` | Base64 编码的 Firebase Admin JSON |
 
-完整的环境变量列表和说明请查看 [DEVELOPMENT.md](DEVELOPMENT.md)。
+### 1.1 完整环境变量
+
+除上表的 Secret 外，以下变量通过 `fly.toml` 的 `[env]` 或 Fly Secret 提供；默认值取自源码。
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `NODE_ENV` | `development` | `production` 时错误响应不返回原始信息，日志默认写入 `/data/nogi-logs` |
+| `PORT` | `3000` | API 监听端口（生产为 `8080`） |
+| `DATABASE_URL` | 无（必需） | PostgreSQL 连接串 |
+| `ACCESS_TOKEN` | 无（必需） | REST API、管理接口和 8081 媒体服务共用的 Bearer Token |
+| `FIREBASE_PROJECT_ID` | 无（必需） | Firebase 项目 ID |
+| `FIREBASE_PRIVATE_KEY_BASE64` | 无 | Base64 编码的服务账号 JSON（生产推荐） |
+| `FIREBASE_PRIVATE_KEY_JSON` | 无 | 直接提供服务账号 JSON 字符串 |
+| `FIREBASE_PRIVATE_KEY_PATH` | `./firebase-admin-key.json` | 本地开发读取的服务账号文件路径 |
+| `PUBLIC_BASE_URL` | `https://nogi-relay.fly.dev` | 生成测试音频等公开 URL 的基址 |
+| `PUBLIC_MEDIA_BASE_URL` | 同 `PUBLIC_BASE_URL` | 生成媒体 URL 的基址；生产指向 8081 媒体服务 |
+| `MEDIA_STORAGE_DIR` | `/app/nogi-media` | 媒体归档目录（生产为 `/data/nogi-media`） |
+| `MEDIA_MAX_BYTES` | `104857600` | 单个媒体文件上限（100 MB） |
+| `NOGI_MEDIA_PORT` | `8081` | monitor 媒体服务端口 |
+| `NOGI_WEB_URL` | `https://message.nogizaka46.com` | 官网网页基址 |
+| `NOGI_API_URL` | `https://api.message.nogizaka46.com` | 官网 API 基址（不是网页域名） |
+| `NOGI_APP_ID` | `jp.co.sonymusic.communication.nogizaka 2.5` | 请求头 `X-Talk-App-ID` |
+| `NOGI_APP_PLATFORM` | `web` | 请求头 `X-Talk-App-Platform` |
+| `NOGI_ORGANIZATION_ID` | `1` | 组织 ID |
+| `NOGI_GROUP_IDS` | 空 | 逗号分隔的成员 ID；为空时按订阅自动发现 |
+| `NOGI_ACCEPT_LANGUAGE` | `zh-CN,en-US,ja` | 请求头 `Accept-Language` |
+| `NOGI_POLL_INTERVAL_SECONDS` | `60` | 轮询间隔，最小 15 |
+| `NOGI_BACKFILL_ON_START` | `true` | 是否在启动、新订阅和会话更新时导入历史 |
+| `NOGI_BROWSER_STATE_FILE` | `/data/nogi-browser-state.json` | 浏览器会话文件 |
+| `NOGI_ACCESS_TOKEN_STATE_FILE` | 会话同目录 `nogi-access-token.json` | 访问令牌缓存 |
+| `NOGI_BROWSER_HEADLESS` | `true` | 是否无头运行 Chromium |
+| `NOGI_BROWSER_BLOCK_MEDIA` | `true` | 阻止页面加载图片/媒体/字体 |
+| `NOGI_BROWSER_SETTLE_SECONDS` | `8` | 会话刷新后等待页面稳定，最小 2 |
+| `NOGI_BROWSER_AUTH_WAIT_SECONDS` | `30` | 等待页面发出 Authorization 的时间，最小 10 |
+| `NOGI_BROWSER_REQUEST_TIMEOUT_SECONDS` | `30` | 单次官网 API 请求超时，最小 10 |
+| `NOGI_BROWSER_RESTART_INTERVAL_SECONDS` | `0`（禁用） | 浏览器定时重启间隔；`0`、负数、未设置或非数字都表示禁用，仅保留 RSS 超过 850 MB 时的重启；正数最小 300 秒 |
+| `NOGI_BROWSER_EXECUTABLE_PATH` | 无 | 指定 Chromium/Edge 可执行文件；`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 为等价回退 |
+| `NOGI_MAX_TOKEN_REFRESH_FAILURES` | `3` | `/v2/update_token` 连续失败进入 `authPaused` 的阈值 |
+| `NOGI_MAX_AUTH_FAILURES` | 无 | 上一项的旧配置名回退 |
+| `LOG_STORAGE_DIR` | 生产 `/data/nogi-logs`，否则 `./logs` | JSONL 错误日志目录 |
+| `LOG_MAX_FILE_BYTES` | `26214400` | 单个日志文件上限（25 MB），超限轮转 |
+| `LOG_RETENTION_DAYS` | `30` | 日志保留天数 |
+| `DB_RETRY_ATTEMPTS` | `5` | 瞬时数据库错误的尝试次数 |
+| `DB_RETRY_BASE_DELAY_MS` | `1000` | 指数退避基数，最小 100 |
+| `DB_RETRY_MAX_DELAY_MS` | `15000` | 退避上限 |
+| `DB_CONNECTION_TIMEOUT_MS` | `10000` | 建连超时 |
+| `DB_POOL_MIN` / `DB_POOL_MAX` | `1` / `20` | 连接池大小 |
+
+以下变量曾出现在历史配置中，但当前代码从不读取，已从 `fly.toml` 和 `server/.env.example` 中移除：`NOGI_MESSAGE_COUNT`、`NOGI_MONITOR_MODE`（时间线条数由源码中的 `count=200` 固定）、`NOGI_ACCESS_TOKEN`、`NOGI_REFRESH_TOKEN`、`NOGI_AUTH_TKN`、`LOG_LEVEL`。浏览器模式由 monitor 自动管理令牌，不再需要手工填写官网令牌。
 
 ## 2. Fly.io 部署
 
@@ -206,13 +254,7 @@ flyctl volumes extend VOLUME_ID --size 5 -a nogi-relay
 
 ### 2.8 媒体存储
 
-正式图片、语音、视频、缩略图和来电背景存储在 `/data/nogi-media/<消息ID>/`：
-
-```text
-media.<扩展名>
-thumbnail.<扩展名>
-phone_image.<扩展名>
-```
+正式图片、语音、视频、缩略图和来电背景按内容哈希存储在 `/data/nogi-media/objects/<sha256>.<扩展名>`；数据库中的 `media_local_path`、`thumbnail_local_path` 和 `phone_image_local_path` 分别指向对应对象。相同字节只保存一份，因此多条来电复用同一张成员照片时不会重复占用空间；图片类媒体的扩展名按文件头识别。升级前按消息目录归档的旧文件仍保留在 `/data/nogi-media/<消息ID>/`，继续可读。
 
 单个媒体文件限制: 100 MB
 
@@ -268,7 +310,7 @@ Nogi history fetched: reason=startup|new_subscription|session_reload, group=...,
 monitor 会自动维护官网会话的有效性，无需人工干预：
 
 1. **按官网逻辑刷新:** 保留当前有效 Token；临近过期时预刷新，真实 401 时等待官网产生不同的新 Token，并只重试原请求一次
-2. **定时重启浏览器（每 30 分钟）:** 释放内存并清理浏览器状态，防止内存泄漏
+2. **按内存重启浏览器:** 进程 RSS 超过 850 MB 时重启浏览器释放内存。默认不再定时重启（`NOGI_BROWSER_RESTART_INTERVAL_SECONDS=0`）；如需额外兜底，可设为正数秒数（例如 `43200` 表示 12 小时）
 3. **认证状态隔离:** `/v2/update_token` 返回 `400` 时立即进入 `signedOut`；其他 4xx/5xx 连续达到 `NOGI_MAX_TOKEN_REFRESH_FAILURES`（默认 3）后进入 `authPaused`。两种状态都会关闭 Chromium 并停止官网轮询，只等待新会话文件。`signedOut` 期间每 5 分钟输出一次 `[NOGI_SESSION_UPDATE_REQUIRED]`。
 
 这些机制确保了服务的长期稳定运行。
@@ -470,7 +512,7 @@ $response = Invoke-RestMethod `
   -Headers @{ Authorization = "Bearer $token" }
 
 # 查看消息信息
-$response.messages | Format-Table id, member_name, member_id, created_at, content
+$response.messages | Format-Table id, member_name, member_id, created_at, text
 ```
 
 **API 查询参数：**
@@ -482,7 +524,8 @@ $response.messages | Format-Table id, member_name, member_id, created_at, conten
   - `audio`: 语音消息
   - `video`: 视频消息
 - `member_id`: 按成员 ID 过滤
-- `sort`: 排序方式（`desc` 或 `asc`，默认 `desc`）
+
+结果固定按 `sent_at DESC` 排序，不支持自定义排序参数。
 
 **查询示例：**
 
@@ -604,7 +647,7 @@ Write-Host "`n下载完成，文件保存在 downloads 目录"
    - 查看服务器日志确认 monitor 是否正常运行
 
 2. **文件扩展名不对**
-   - 服务器会根据实际文件类型返回正确的 `Content-Type`
+   - 归档时图片按文件头识别扩展名（jpg/png/gif/webp），音频和视频沿用 URL 扩展名；服务端按归档文件的扩展名返回 `Content-Type`
    - 可以根据响应头调整文件扩展名
 
 3. **批量下载太慢**
@@ -667,7 +710,7 @@ Write-Host "`n下载完成，文件保存在 downloads 目录"
 
 - 确认 `PUBLIC_MEDIA_BASE_URL` 指向 monitor 的 8081 服务。
 - 确认请求携带 Relay Bearer Token。
-- 检查 `/data/nogi-media/<消息ID>/phone_image.*` 是否存在。
+- 检查该消息 `phone_image_local_path` 指向的 `/data/nogi-media/objects/<sha256>.<扩展名>` 是否存在（升级前的旧消息仍位于 `/data/nogi-media/<消息ID>/`）。
 - 确认消息字段 `phone_image_local_path` 已填充。
 - 检查媒体下载日志和 100 MB 单文件限制。
 
@@ -847,7 +890,7 @@ Invoke-RestMethod 'https://YOUR_APP_NAME.fly.dev/health'
 
 2. **访问令牌按需刷新：** 只有临近过期或 401 恢复时才会出现 `Nogi browser session supplied a refreshed access token`；有效 Token 不再触发定时页面验证。
 
-3. **浏览器自动重启 (每 30 分钟):**
+3. **浏览器自动重启（进程 RSS 超过 850 MB；默认无定时重启）:**
    ```text
    Nogi browser monitor restarting browser context to release memory
    ```
@@ -992,9 +1035,12 @@ vivo / OriginOS      -> vivo Push
 
 - 只实现 FCM，尚未接入 OPPO、vivo、小米或华为系统推送。
 - API 使用单个共享 Token，没有用户级身份和权限体系。
-- APK 默认 Token 会编译进包内，不适合公开分发。
+- 默认构建不注入 Relay Token（API 令牌默认为空）；只有在未提交的 `local.properties` 中提供 `relay.access.token` 时才会被编译进包内，带内置令牌的调试包不适合公开分发。
 - 服务端消息列表没有总数、游标和完整参数范围校验。
 - FCM 无效设备 Token 需要运维清理。
+- 客户端历史同步没有固定页数上限，历史很大时会连续请求并可能触发 `/v1/*` 15 分钟 100 次的限流。
+- 媒体归档没有保留策略或垃圾回收；卷写满后 `media.archive` 会失败，消息仍会入库但媒体地址回退到上游 URL。
+- 媒体对象按内容哈希共享，多个消息行指向同一文件；未来若增加删除功能必须先做引用计数。
 - `test-call` 使用服务端内置短 WAV，只用于验证下载、推送和来电界面，不代表正式成员语音内容。
 - Release APK 需要正式签名后才能对外发布。
 

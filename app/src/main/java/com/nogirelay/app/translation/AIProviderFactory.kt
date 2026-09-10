@@ -3,20 +3,6 @@ package com.nogirelay.app.translation
 import com.nogirelay.app.translation.providers.*
 
 object AIProviderFactory {
-    fun getAllProviders(): List<AIProvider> = listOf(
-        OpenAIProvider(),
-        KimiProvider(),
-        ClaudeProvider(),
-        DeepSeekProvider(),
-        GLMProvider(),
-        GeminiProvider(),
-        QwenProvider(),
-        GrokProvider(),
-        MiniMaxProvider(),
-        MiMoProvider(),
-        HunYuanProvider()
-    )
-    
     fun getProvider(type: AIProviderType): AIProvider {
         return when (type) {
             AIProviderType.OPENAI -> OpenAIProvider()

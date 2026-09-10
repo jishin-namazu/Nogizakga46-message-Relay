@@ -260,25 +260,6 @@ class VoicePlaybackService : Service() {
         android.util.Log.d("VoicePlayback", "setAudioOutput done (legacy)")
     }
 
-    private fun outputDevices(): Array<AudioDeviceInfo> =
-        audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-
-    private fun preferredHeadsetDevice(): AudioDeviceInfo? {
-        val devices = outputDevices()
-        val priority = intArrayOf(
-            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-            AudioDeviceInfo.TYPE_WIRED_HEADSET,
-            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-            AudioDeviceInfo.TYPE_USB_HEADSET,
-            AudioDeviceInfo.TYPE_USB_DEVICE,
-            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-        )
-        priority.forEach { type ->
-            devices.find { it.type == type }?.let { return it }
-        }
-        return null
-    }
-
     companion object {
         const val EXTRA_MESSAGE_ID = "message_id"
         const val ACTION_PLAY = "com.nogirelay.app.PLAY_VOICE"
@@ -299,9 +280,6 @@ class VoicePlaybackService : Service() {
 
         @Volatile
         private var playing: Boolean = false
-
-        fun isPlaying(messageId: String): Boolean =
-            _playbackState.value.messageId == messageId && _playbackState.value.isPlaying
 
         fun seek(context: Context, messageId: String, positionMs: Int) {
             context.startService(

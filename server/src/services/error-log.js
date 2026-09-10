@@ -225,14 +225,6 @@ export async function recordError(scope, error, context = {}) {
   return entry;
 }
 
-export async function recordWarning(scope, message, context = {}) {
-  const entry = buildEntry('warn', scope, { name: 'Warning', message }, context);
-  nativeConsole.warn(`[${scope}] ${entry.message}`, entry);
-  await appendFile(entry);
-  if (dbWriter) void Promise.resolve(dbWriter(entry)).catch(() => {});
-  return entry;
-}
-
 installPersistentConsoleLogging();
 
-export default { setErrorLogDbWriter, recordError, recordWarning };
+export default { setErrorLogDbWriter, recordError };

@@ -116,10 +116,13 @@ nogizaka46msg/
 │   │   ├── index.js                  API 服务入口
 │   │   ├── db/                       PostgreSQL 连接封装
 │   │   ├── middleware/               Bearer Token、日志与错误处理
-│   │   ├── routes/                   devices/messages/push 路由
-│   │   ├── services/                 消息、设备、媒体和 FCM 业务逻辑
+│   │   ├── routes/                   devices/messages/push/admin 路由
+│   │   ├── services/                 消息、设备、媒体、会话和 FCM 业务逻辑
 │   │   └── monitor/                  官网监控与媒体服务
 │   ├── database/schema.sql           当前数据库初始化脚本
+│   ├── test/                         Node 内置测试运行器测试
+│   ├── start-all.sh                  生产容器启动编排
+│   ├── upload-session.js             浏览器会话上传与激活等待
 │   ├── .env.example                  本地环境变量模板
 │   ├── firebase-admin-key.json       本机 Firebase 服务端密钥，不提交
 │   └── nogi-browser-state.json       官网登录会话，不提交
@@ -127,7 +130,9 @@ nogizaka46msg/
 ├── fly.toml                          Fly.io 应用、进程、端口和卷配置
 ├── build.gradle.kts                  Android 顶层插件版本
 ├── settings.gradle.kts               Gradle 仓库和模块定义
-└── README.md                         本文档
+├── README.md                         项目概览
+├── DEPLOYMENT.md                     生产部署、验收与运维
+└── DEVELOPMENT.md                    本文档
 ```
 
 ## 运行条件
@@ -157,7 +162,7 @@ nogizaka46msg/
 - Firebase Admin 服务账号 JSON。
 - `FIREBASE_PRIVATE_KEY_BASE64` 或 `FIREBASE_PRIVATE_KEY_JSON`。
 - `nogi-browser-state.json`：包含乃木坂46官网 cookies、localStorage 和 IndexedDB 会话。
-- `NOGI_ACCESS_TOKEN`、`NOGI_REFRESH_TOKEN` 和 `NOGI_AUTH_TKN`。
+- 旧配置中的官网令牌变量 `NOGI_ACCESS_TOKEN`、`NOGI_REFRESH_TOKEN`、`NOGI_AUTH_TKN`；浏览器模式不再读取，但若本机仍保留同样属敏感值。
 - Android 客户端中填写的模型供应商 API Key。
 
 项目的 `.gitignore` 已忽略主要敏感文件，但提交前仍应检查：
@@ -176,7 +181,7 @@ git status --short
 
 ## 开发配置说明
 
-本地服务使用 server/.env，最小配置和启动步骤见本地启动服务器章节。完整变量表以及生产覆盖值见 [DEPLOYMENT.md](DEPLOYMENT.md)。
+本地服务使用 `server/.env`，最小配置和启动步骤见「本地启动服务器」章节。完整变量表见 [DEPLOYMENT.md](DEPLOYMENT.md) 的「完整环境变量」一节。
 
 ## 本地启动服务器
 
@@ -264,7 +269,7 @@ monitor 进程会同时启动 8081 端口的受保护媒体服务。
 
 ### 官网访问令牌自动续期
 
-刷新令牌始终由官网页面中的 TokenManager 管理；官网当前会在访问令牌接近过期（约 10 秒内）或 API 返回 401 时调用 `/v2/update_token`。monitor 不再定时清空有效 token 或仅凭页面未发请求判定失效；预刷新失败时仍尝试当前 token，真实 401 只触发一次新 token 刷新和原请求重试。
+刷新令牌始终由官网页面中的 TokenManager 管理；官网会在访问令牌接近过期或 API 返回 401 时调用 `/v2/update_token`。monitor 自身在令牌将于 30 秒内过期时（源码常量 `ACCESS_TOKEN_REFRESH_SKEW_MS`）先尝试预刷新，失败仍继续使用当前 token；真实 401 只触发一次新 token 刷新和原请求重试。monitor 不再定时清空有效 token 或仅凭页面未发请求判定失效。
 
 当 `/v2/update_token` 返回 HTTP `400` 时，monitor 立即进入 `signedOut`，并同时进入 `authPaused`：关闭 Chromium、停止官网认证请求和消息轮询、删除失效 access-token 缓存，但保留健康检查、管理接口、媒体服务和会话文件监听。`signedOut` 期间立即输出一次退出告警，之后每 5 分钟输出 `[NOGI_SESSION_UPDATE_REQUIRED]`，直到新会话通过官网 API 验证。其他 `/v2/update_token` 4xx/5xx 按连续失败次数累计，达到阈值后进入 `authPaused`；成功响应会清零计数。
 
@@ -279,7 +284,7 @@ monitor 进程会同时启动 8081 端口的受保护媒体服务。
 Fly.io 的端口检查由平台在机器进入 `started` 后独立发起，可能早于应用监听端口并记录瞬时失败。`fly.toml` 中 API、媒体 TCP 检查和 API HTTP 检查均设置了 30 秒 `grace_period`；这能避免启动窗口造成部署失败，但不会隐藏平台产生的首次探测日志。
 
 **配置项:**
-- `NOGI_BROWSER_RESTART_INTERVAL_SECONDS`: 浏览器进程重启间隔(默认 1800 秒)
+- `NOGI_BROWSER_RESTART_INTERVAL_SECONDS`: 浏览器定时重启间隔；`0`（默认）表示禁用定时重启，只保留 RSS 超过 850 MB 时的重启；正数时最小 300 秒
 - `NOGI_MAX_TOKEN_REFRESH_FAILURES`: `/v2/update_token` 非 400 失败进入认证暂停前允许的连续次数（默认 3）
 - `NOGI_MAX_AUTH_FAILURES`: 兼容旧配置名；未设置前者时作为回退值
 
@@ -456,8 +461,6 @@ $token = Read-Host 'ACCESS_TOKEN'; Invoke-RestMethod -Method Post -Uri 'https://
 
 `test-call` 不写入服务器的 `messages` 或 `push_logs` 表，推送是否成功以接口响应中的 `successCount` 和 `failureCount` 为准。服务端会从 `/v1/push/test-call-audio.wav` 提供一段内置短 WAV，客户端必须下载完成后才显示来电页面。
 
-服务端启动时会清理旧版本遗留的 `test-...` 和 `test_...` 消息，历史消息接口也不会返回测试 ID。客户端数据库升级到 v3 时会清理本地旧测试记录；客户端启动和测试来电结束时还会撤销对应的临时来电通知。
-
 服务端启动时会清理旧版本遗留的 `test-...` 和 `test_...` 消息，历史消息接口也不会返回测试 ID。客户端数据库升级到 v3 时会清理本地旧测试记录；客户端启动和测试来电结束时还会撤销对应的临时来电通知，因此不需要为此卸载应用或清空正式消息。
 
 客户端本地 SQLite schema v4 新增 `is_unread` 字段。升级时已有消息以 `0`（已读）作为基线；历史同步也按已读插入，只有 FCM 首次成功插入的新消息才根据当前会话可见状态写入未读标记。
@@ -544,7 +547,7 @@ schema 包含成员基础信息表，但监控实际以官网 `/v2/groups` 返�
 }
 ```
 
-完整 payload 小于约 3800 字符时直接携带；超过限制时只发送 `message_id` 和 `type`，客户端再调用消息详情接口。
+完整 payload 编码后的 UTF-8 字节数在安全预算内时直接携带（FCM data 上限 4096 字节，服务端保留余量）；超过时只发送 `message_id` 和 `type`，客户端再调用消息详情接口。
 
 ### 客户端推送流程
 
@@ -682,8 +685,11 @@ subscription.state == active
 - 单个文件最大 100 MB。
 - 下载超时 90 秒。
 - 使用临时文件写入，完成后再重命名，避免客户端读取半成品。
-- 相同目标文件已存在且非空时不会重复下载。
-- 正式语音来电的 `phone_image_url` 会归档为消息目录中的 `phone_image.<扩展名>`。
+- 下载完成后按内容 SHA-256 归档为共享对象 `objects/<sha256>.<扩展名>`；相同字节只保存一份。
+- 同一 URL 在进程内直接复用已归档对象，不重复下载。
+- 图片类媒体（含 `phone_image` 和 `thumbnail`）的扩展名按文件头识别，而不是照抄 URL。
+- 正式语音来电的 `phone_image_url` 会归档；多条来电复用同一张照片时只占用一份空间。
+- 升级前按 `<消息ID>/` 目录归档的旧文件保持原样并继续可读。
 - API 对外返回受保护的 Relay 媒体 URL，客户端不直接依赖官网私有 CDN URL。
 - Fly.io 的持久化卷挂载到 monitor 进程的 `/data`。
 - 线上媒体通过 `https://nogi-relay.fly.dev:8081` 提供，并要求相同 Bearer Token。
@@ -707,7 +713,7 @@ subscription.state == active
 - 手动同步服务器历史消息。
 - 执行本机全屏来电界面测试。
 
-客户端在启动和每次回到前台时都会同步历史消息。单页读取 200 条，最多读取 50 页，即单次最多扫描 10,000 条服务器消息。
+客户端在启动和每次回到前台时都会同步历史消息。单页读取 200 条，持续请求直到某一页返回不足 200 条为止。当前实现没有固定页数上限，历史较大时会连续请求，可能触发 `/v1/*` 的 15 分钟 100 次限流（见 DEPLOYMENT.md「限制与发布前检查」）。
 
 ### 启动过渡页与配色
 

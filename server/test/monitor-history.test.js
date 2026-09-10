@@ -200,3 +200,37 @@ test('a newly subscribed group receives the same complete history backfill', asy
   assert.equal(pushCount, 0);
   assert.deepEqual([...monitor.backfilledGroupIds], [47, 48]);
 });
+
+test('pushes the persisted row so FCM payloads can use archived media URLs', async () => {
+  const pushed = [];
+  const persisted = {
+    id: 'saved-media-1',
+    type: 'audio',
+    media_local_path: '/data/nogi-media/saved-media-1/media.m4a',
+    thumbnail_local_path: null,
+    phone_image_local_path: '/data/nogi-media/saved-media-1/phone_image.jpg',
+  };
+  const monitor = new NogiBrowserMonitor({
+    messageStore: {
+      async saveMessage() {
+        return { message: persisted, isNew: true };
+      },
+    },
+    pusher: {
+      async pushMessage(message) {
+        pushed.push(message);
+        return { success: true, successCount: 1 };
+      },
+    },
+  });
+
+  const result = await monitor.processMessage(
+    { id: 'saved-media-1', type: 'audio', incoming_call_from: '一ノ瀬 美空' },
+    true,
+  );
+
+  assert.equal(result.isNew, true);
+  assert.equal(result.pushed, true);
+  assert.equal(pushed.length, 1);
+  assert.strictEqual(pushed[0], persisted);
+});

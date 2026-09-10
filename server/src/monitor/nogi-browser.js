@@ -24,7 +24,7 @@ const DEFAULT_PLATFORM = 'web';
 const DEFAULT_ORGANIZATION_ID = '1';
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_BROWSER_STATE_FILE = '/data/nogi-browser-state.json';
-const DEFAULT_BROWSER_RESTART_INTERVAL_MS = 30 * 60 * 1000;
+const MEMORY_RESTART_RSS_MB = 850;
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 30_000;
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -111,10 +111,16 @@ class NogiBrowserMonitor {
       Number.parseInt(process.env.NOGI_BROWSER_REQUEST_TIMEOUT_SECONDS || '30', 10) * 1000,
       10_000,
     );
-    this.browserRestartIntervalMs = Math.max(
-      Number.parseInt(process.env.NOGI_BROWSER_RESTART_INTERVAL_SECONDS || '1800', 10) * 1000,
-      5 * 60_000,
-    ) || DEFAULT_BROWSER_RESTART_INTERVAL_MS;
+    // The periodic restart is opt-in: unset, 0, negative or non-numeric all
+    // disable it, and the RSS trigger in shouldRestartBrowser() stays active.
+    const restartIntervalSeconds = Number.parseInt(
+      process.env.NOGI_BROWSER_RESTART_INTERVAL_SECONDS ?? '',
+      10,
+    );
+    this.browserRestartIntervalMs = Number.isFinite(restartIntervalSeconds) && restartIntervalSeconds > 0
+      ? Math.max(restartIntervalSeconds * 1000, 5 * 60_000)
+      : 0;
+    this.memoryRestartRssMB = MEMORY_RESTART_RSS_MB;
     this.backfillOnStart = parseBoolean(process.env.NOGI_BACKFILL_ON_START, true);
     this.headless = parseBoolean(process.env.NOGI_BROWSER_HEADLESS, true);
     this.blockPageMedia = parseBoolean(process.env.NOGI_BROWSER_BLOCK_MEDIA, true);
@@ -204,12 +210,18 @@ class NogiBrowserMonitor {
       const isNew = typeof saveResult === 'object' && saveResult !== null && 'isNew' in saveResult
         ? Boolean(saveResult.isNew)
         : Boolean(saveResult);
+      // Push the persisted row, not the normalized object: only the row carries
+      // media_local_path/thumbnail_local_path/phone_image_local_path, so the FCM
+      // payload points at the protected Relay archive instead of the upstream CDN.
+      const pushTarget = typeof saveResult === 'object' && saveResult !== null && saveResult.message
+        ? saveResult.message
+        : message;
       let pushed = false;
 
       // 不推送已撤回的消息
       if (sendPush && isNew && !message.is_canceled) {
         try {
-          await this.pusher.pushMessage(message);
+          await this.pusher.pushMessage(pushTarget);
           pushed = true;
         } catch (error) {
           await recordError('monitor.push_message', error, { messageId: message.id });
@@ -240,6 +252,9 @@ class NogiBrowserMonitor {
       throw error;
     }
 
+    console.log(this.browserRestartIntervalMs > 0
+      ? `Nogi browser restart policy: RSS > ${this.memoryRestartRssMB}MB, or every ${Math.round(this.browserRestartIntervalMs / 60_000)} min`
+      : `Nogi browser restart policy: RSS > ${this.memoryRestartRssMB}MB only (periodic restart disabled)`);
     this.isRunning = true;
     this.authState = 'authenticated';
     this.loopPromise = this.runLoop();
@@ -511,12 +526,14 @@ class NogiBrowserMonitor {
     const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
     const rssMB = Math.round(memUsage.rss / 1024 / 1024);
     
-    if (rssMB > 850) {
+    if (rssMB > this.memoryRestartRssMB) {
       console.log(`内存使用过高 (RSS: ${rssMB}MB, Heap: ${heapUsedMB}MB), 触发浏览器重启`);
       return true;
     }
     
-    return this.browserStartedAt > 0 && Date.now() - this.browserStartedAt >= this.browserRestartIntervalMs;
+    return this.browserRestartIntervalMs > 0
+      && this.browserStartedAt > 0
+      && Date.now() - this.browserStartedAt >= this.browserRestartIntervalMs;
   }
 
   shouldRefreshAccessToken() {

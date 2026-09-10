@@ -31,12 +31,6 @@ object MediaDownloader {
 
     data class SavedDownload(val uri: Uri, val displayName: String)
 
-    /** Kept as a compatibility name for existing call sites. */
-    fun enqueue(context: Context, message: RelayMessage): File {
-        val mediaUrl = mediaUrlFor(message) ?: error("消息没有可保存的媒体")
-        return downloadUrl(context.applicationContext, mediaUrl, message.type)
-    }
-
     /** Downloads a message's media once and returns the private local file. */
     fun enqueueIfNeeded(context: Context, message: RelayMessage): File? {
         val mediaUrl = mediaUrlFor(message) ?: return null

@@ -17,6 +17,18 @@ const MIME_BY_EXTENSION = {
   webm: 'video/webm',
 };
 
+// services/media.js publicUrl() emits phone_image URLs for incoming-call
+// backgrounds, so the media server has to serve that kind too.
+const SERVED_MEDIA_KINDS = ['media', 'thumbnail', 'phone_image'];
+
+function parseMediaRequest(pathname) {
+  const match = pathname.match(/^\/v1\/messages\/([^/]+)\/media\/([A-Za-z_]+)$/);
+  if (!match) return null;
+  const kind = match[2];
+  if (!SERVED_MEDIA_KINDS.includes(kind)) return null;
+  return { messageId: decodeURIComponent(match[1]), kind };
+}
+
 function bearerToken(request) {
   const value = request.headers.authorization || '';
   return value.toLowerCase().startsWith('bearer ') ? value.slice(7).trim() : '';
@@ -84,11 +96,10 @@ class NogiMediaServer {
     }
 
     const parsed = new URL(request.url, 'http://127.0.0.1');
-    const match = parsed.pathname.match(/^\/v1\/messages\/([^/]+)\/media\/(media|thumbnail)$/);
-    if (!match) return sendJson(response, 404, { error: 'Not found' });
+    const target = parseMediaRequest(parsed.pathname);
+    if (!target) return sendJson(response, 404, { error: 'Not found' });
 
-    const messageId = decodeURIComponent(match[1]);
-    const kind = match[2];
+    const { messageId, kind } = target;
     const filePath = await messageService.getStoredMediaPath(messageId, kind);
     if (!filePath) return sendJson(response, 404, { error: 'Media not archived' });
 
@@ -109,5 +120,5 @@ class NogiMediaServer {
 
 const mediaServer = new NogiMediaServer();
 
-export { NogiMediaServer };
+export { NogiMediaServer, parseMediaRequest };
 export default mediaServer;
