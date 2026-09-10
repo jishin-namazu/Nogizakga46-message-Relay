@@ -119,12 +119,32 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             filter.arguments,
             null,
             null,
-            "sent_at DESC, received_at DESC",
+            MEMBER_MESSAGE_ORDER,
             "${limit.coerceIn(1, 100)} OFFSET ${offset.coerceAtLeast(0)}",
         ).use { cursor ->
             while (cursor.moveToNext()) result += cursor.toMessage()
         }
         return result
+    }
+
+    fun messageIndexForMember(memberKey: String, messageId: String, searchQuery: String = ""): Int {
+        val filter = memberFilter(memberKey, searchQuery)
+        readableDatabase.query(
+            "messages",
+            arrayOf("id"),
+            filter.selection,
+            filter.arguments,
+            null,
+            null,
+            MEMBER_MESSAGE_ORDER,
+        ).use { cursor ->
+            var index = 0
+            while (cursor.moveToNext()) {
+                if (cursor.getString(0) == messageId) return index
+                index += 1
+            }
+        }
+        return -1
     }
 
     fun countMessagesForMember(memberKey: String, searchQuery: String = ""): Int {
@@ -285,5 +305,6 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         private const val DB_NAME = "messages.db"
         private const val DB_VERSION = 3
         private const val TEST_MESSAGE_GLOB = "test[-_]*"
+        private const val MEMBER_MESSAGE_ORDER = "sent_at DESC, received_at DESC, id DESC"
     }
 }

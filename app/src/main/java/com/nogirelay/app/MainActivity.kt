@@ -262,6 +262,7 @@ private fun RelayApp(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var tab by remember { mutableStateOf(if (initialMessageId == null) AppTab.HOME else AppTab.MESSAGES) }
+    var pendingNotificationMessageId by remember { mutableStateOf(initialMessageId) }
     var notificationGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
     var fullScreenGranted by remember { mutableStateOf(FullScreenPermission.canUse(context)) }
     var overlayGranted by remember { mutableStateOf(OverlayPermission.canUse(context)) }
@@ -367,7 +368,12 @@ private fun RelayApp(
 
                 AppTab.MESSAGES -> MessagesScreen(
                     refreshKey = refreshKey,
-                    initialMessageId = initialMessageId,
+                    initialMessageId = pendingNotificationMessageId,
+                    onInitialMessageHandled = { handledId ->
+                        if (pendingNotificationMessageId == handledId) {
+                            pendingNotificationMessageId = null
+                        }
+                    },
                     onOpenMedia = onOpenMedia,
                     onPlayVoice = onPlayVoice,
                     onUpdateProximity = onUpdateProximity,
@@ -581,6 +587,7 @@ private fun PermissionRow(
 private fun MessagesScreen(
     refreshKey: Int,
     initialMessageId: String?,
+    onInitialMessageHandled: (String) -> Unit,
     onOpenMedia: (RelayMessage) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
     onUpdateProximity: (VoicePlaybackState) -> Unit,
@@ -597,18 +604,30 @@ private fun MessagesScreen(
     var currentPage by remember { mutableIntStateOf(0) }
     var pageInput by remember { mutableStateOf("1") }
     var pendingDownload by remember { mutableStateOf<RelayMessage?>(null) }
+    var notificationScrollMessageId by remember { mutableStateOf<String?>(null) }
     
     LaunchedEffect(playbackState) {
         onUpdateProximity(playbackState)
     }
     
     LaunchedEffect(initialMessageId) {
-        if (initialMessageId != null) {
-            val message = AppGraph.database.find(initialMessageId)
-            if (message != null) {
-                selectedMemberId = message.memberId.ifBlank { message.memberName }
-            }
+        val targetId = initialMessageId ?: return@LaunchedEffect
+        val message = AppGraph.database.find(targetId)
+        if (message == null) {
+            onInitialMessageHandled(targetId)
+            return@LaunchedEffect
         }
+        val memberKey = message.memberId.ifBlank { message.memberName }
+        val messageIndex = AppGraph.database.messageIndexForMember(memberKey, targetId)
+        if (messageIndex < 0) {
+            onInitialMessageHandled(targetId)
+            return@LaunchedEffect
+        }
+        searchQuery = ""
+        selectedMemberId = memberKey
+        currentPage = messageIndex / MEMBER_MESSAGES_PAGE_SIZE
+        pageInput = (currentPage + 1).toString()
+        notificationScrollMessageId = targetId
     }
 
     val saveDownload: (RelayMessage) -> Unit = { message ->
@@ -694,13 +713,10 @@ private fun MessagesScreen(
                         val playingMemberId = playingMessage?.memberId?.ifBlank { playingMessage.memberName }
                         if (playingMemberId == it.id) {
                             // Calculate which page the playing message is on
-                            val allMessages = AppGraph.database.messagesForMember(
+                            val playingIndex = AppGraph.database.messageIndexForMember(
                                 memberKey = it.id,
-                                searchQuery = "",
-                                limit = Int.MAX_VALUE,
-                                offset = 0,
+                                messageId = currentPlayingMessageId,
                             )
-                            val playingIndex = allMessages.indexOfFirst { msg -> msg.id == currentPlayingMessageId }
                             if (playingIndex >= 0) {
                                 val targetPage = playingIndex / MEMBER_MESSAGES_PAGE_SIZE
                                 currentPage = targetPage
@@ -748,7 +764,7 @@ private fun MessagesScreen(
             LaunchedEffect(selectedMember, searchQuery, page) {
                 if (currentPage != page) currentPage = page
                 pageInput = (page + 1).toString()
-                if (memberMessages.isNotEmpty()) {
+                if (memberMessages.isNotEmpty() && notificationScrollMessageId == null) {
                     // Check if playing message is in current page
                     if (playbackState.isPlaying && playbackState.messageId != null) {
                         val playingIndex = memberMessages.indexOfFirst { it.id == playbackState.messageId }
@@ -760,6 +776,16 @@ private fun MessagesScreen(
                     } else {
                         messageListState.scrollToItem(0)
                     }
+                }
+            }
+            LaunchedEffect(notificationScrollMessageId, memberMessages) {
+                val targetId = notificationScrollMessageId ?: return@LaunchedEffect
+                val targetIndex = memberMessages.indexOfFirst { it.id == targetId }
+                if (targetIndex >= 0) {
+                    // The search field occupies item 0, matching the existing voice-playback positioning.
+                    messageListState.scrollToItem(targetIndex + 1)
+                    notificationScrollMessageId = null
+                    onInitialMessageHandled(targetId)
                 }
             }
             if (showPageDialog) {
