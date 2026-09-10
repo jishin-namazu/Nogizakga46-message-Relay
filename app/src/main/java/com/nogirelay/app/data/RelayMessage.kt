@@ -34,6 +34,9 @@ data class RelayMessage(
     val translation: String? = null,
     val translationDone: Boolean = false,
 ) {
+    val memberKey: String
+        get() = memberId.ifBlank { memberName }
+
     val isTestMessage: Boolean
         get() = isTestId(id)
 

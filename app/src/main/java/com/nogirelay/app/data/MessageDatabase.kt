@@ -25,6 +25,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
                 incoming_call_from TEXT,
                 ringtone_url TEXT,
                 is_played INTEGER NOT NULL DEFAULT 0,
+                is_unread INTEGER NOT NULL DEFAULT 0,
                 translation TEXT,
                 translation_done INTEGER NOT NULL DEFAULT 0,
                 received_at INTEGER NOT NULL
@@ -32,6 +33,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             """.trimIndent(),
         )
         db.execSQL("CREATE INDEX idx_messages_sent_at ON messages(sent_at DESC)")
+        db.execSQL("CREATE INDEX idx_messages_unread_member ON messages(is_unread, member_id, member_name)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -43,9 +45,14 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             // Older builds used test_... IDs, so remove those records during migration.
             db.delete("messages", "id GLOB ?", arrayOf(TEST_MESSAGE_GLOB))
         }
+        if (oldVersion < 4) {
+            // Existing local history is the read baseline when unread tracking is introduced.
+            db.execSQL("ALTER TABLE messages ADD COLUMN is_unread INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("CREATE INDEX idx_messages_unread_member ON messages(is_unread, member_id, member_name)")
+        }
     }
 
-    fun insert(message: RelayMessage): Boolean {
+    fun insert(message: RelayMessage, isUnread: Boolean = false): Boolean {
         val values = ContentValues().apply {
             put("id", message.id)
             put("member_id", message.memberId)
@@ -61,6 +68,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             put("incoming_call_from", message.incomingCallFrom)
             put("ringtone_url", message.ringtoneUrl)
             put("is_played", if (message.isPlayed) 1 else 0)
+            put("is_unread", if (isUnread) 1 else 0)
             put("translation", message.translation)
             put("translation_done", if (message.translationDone) 1 else 0)
             put("received_at", System.currentTimeMillis())
@@ -158,6 +166,48 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             null,
             null,
         ).use { cursor -> return if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+    }
+
+    fun unreadCountsByMember(): Map<String, Int> {
+        val result = mutableMapOf<String, Int>()
+        val memberKeyExpression = "CASE WHEN TRIM(member_id) <> '' THEN member_id ELSE member_name END"
+        readableDatabase.query(
+            "messages",
+            arrayOf("$memberKeyExpression AS member_key", "COUNT(*) AS unread_count"),
+            "is_unread = 1 AND id NOT GLOB ? AND (text_content IS NOT NULL OR media_url IS NOT NULL)",
+            arrayOf(TEST_MESSAGE_GLOB),
+            memberKeyExpression,
+            null,
+            null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result[cursor.getString(0)] = cursor.getInt(1)
+            }
+        }
+        return result
+    }
+
+    fun countUnreadMessages(): Int {
+        readableDatabase.query(
+            "messages",
+            arrayOf("COUNT(*)"),
+            "is_unread = 1 AND id NOT GLOB ? AND (text_content IS NOT NULL OR media_url IS NOT NULL)",
+            arrayOf(TEST_MESSAGE_GLOB),
+            null,
+            null,
+            null,
+        ).use { cursor -> return if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+    }
+
+    fun markMessagesReadForMember(memberKey: String): Int {
+        val filter = memberFilter(memberKey, "")
+        val values = ContentValues().apply { put("is_unread", 0) }
+        return writableDatabase.update(
+            "messages",
+            values,
+            "is_unread = 1 AND ${filter.selection}",
+            filter.arguments,
+        )
     }
 
     fun find(id: String): RelayMessage? {
@@ -303,7 +353,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
 
     companion object {
         private const val DB_NAME = "messages.db"
-        private const val DB_VERSION = 3
+        private const val DB_VERSION = 4
         private const val TEST_MESSAGE_GLOB = "test[-_]*"
         private const val MEMBER_MESSAGE_ORDER = "sent_at DESC, received_at DESC, id DESC"
     }

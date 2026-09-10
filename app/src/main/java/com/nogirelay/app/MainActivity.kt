@@ -60,6 +60,8 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -83,6 +85,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -113,6 +116,7 @@ import com.nogirelay.app.call.IncomingCallNotifier
 import com.nogirelay.app.call.OverlayPermission
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.AppSettings
+import com.nogirelay.app.data.MessageReadTracker
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.data.api.ApiConfig
@@ -148,6 +152,7 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val syncRequests = MutableStateFlow(0L)
+    private val notificationMessageIds = MutableStateFlow<String?>(null)
     private lateinit var proximityControl: com.nogirelay.app.call.ProximityScreenControl
     private lateinit var audioManager: android.media.AudioManager
 
@@ -166,11 +171,15 @@ class MainActivity : ComponentActivity() {
         
         proximityControl = com.nogirelay.app.call.OfficialProximityScreenControl(this)
         audioManager = getSystemService(android.media.AudioManager::class.java)
+        notificationMessageIds.value = intent.getStringExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID)
 
         setContent {
             NogiRelayTheme {
                 RelayApp(
-                    initialMessageId = intent.getStringExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID),
+                    notificationMessageIds = notificationMessageIds,
+                    onNotificationMessageHandled = { handledId ->
+                        notificationMessageIds.compareAndSet(handledId, null)
+                    },
                     onOpenMedia = ::openMedia,
                     onPlayVoice = ::playVoice,
                     onTestCall = ::testCall,
@@ -184,7 +193,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        MessageReadTracker.setAppVisible(true)
         syncRequests.update { it + 1 }
+    }
+
+    override fun onStop() {
+        MessageReadTracker.setAppVisible(false)
+        super.onStop()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID)?.let {
+            notificationMessageIds.value = it
+        }
     }
 
     override fun onDestroy() {
@@ -252,7 +275,8 @@ private enum class AppTab(val label: String) { HOME("概览"), MESSAGES("消息"
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RelayApp(
-    initialMessageId: String?,
+    notificationMessageIds: StateFlow<String?>,
+    onNotificationMessageHandled: (String) -> Unit,
     onOpenMedia: (RelayMessage) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
     onTestCall: () -> Unit,
@@ -261,14 +285,19 @@ private fun RelayApp(
     onUpdateProximity: (VoicePlaybackState) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val initialMessageId by notificationMessageIds.collectAsState()
     var tab by remember { mutableStateOf(if (initialMessageId == null) AppTab.HOME else AppTab.MESSAGES) }
-    var pendingNotificationMessageId by remember { mutableStateOf(initialMessageId) }
     var notificationGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
     var fullScreenGranted by remember { mutableStateOf(FullScreenPermission.canUse(context)) }
     var overlayGranted by remember { mutableStateOf(OverlayPermission.canUse(context)) }
     var refreshKey by remember { mutableIntStateOf(0) }
     var syncing by remember { mutableStateOf(false) }
     var syncLabel by remember { mutableStateOf("") }
+    val unreadMessageCount = remember(refreshKey) { AppGraph.database.countUnreadMessages() }
+
+    LaunchedEffect(initialMessageId) {
+        if (initialMessageId != null) tab = AppTab.MESSAGES
+    }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -326,14 +355,24 @@ private fun RelayApp(
                         selected = tab == item,
                         onClick = { tab = item },
                         icon = {
-                            Icon(
-                                imageVector = when (item) {
-                                    AppTab.HOME -> Icons.Rounded.Home
-                                    AppTab.MESSAGES -> Icons.Rounded.Inbox
-                                    AppTab.SETTINGS -> Icons.Rounded.Settings
+                            BadgedBox(
+                                badge = {
+                                    if (item == AppTab.MESSAGES && unreadMessageCount > 0) {
+                                        Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                            Text(unreadBadgeLabel(unreadMessageCount))
+                                        }
+                                    }
                                 },
-                                contentDescription = item.label,
-                            )
+                            ) {
+                                Icon(
+                                    imageVector = when (item) {
+                                        AppTab.HOME -> Icons.Rounded.Home
+                                        AppTab.MESSAGES -> Icons.Rounded.Inbox
+                                        AppTab.SETTINGS -> Icons.Rounded.Settings
+                                    },
+                                    contentDescription = item.label,
+                                )
+                            }
                         },
                         label = { Text(item.label) },
                     )
@@ -368,12 +407,9 @@ private fun RelayApp(
 
                 AppTab.MESSAGES -> MessagesScreen(
                     refreshKey = refreshKey,
-                    initialMessageId = pendingNotificationMessageId,
-                    onInitialMessageHandled = { handledId ->
-                        if (pendingNotificationMessageId == handledId) {
-                            pendingNotificationMessageId = null
-                        }
-                    },
+                    initialMessageId = initialMessageId,
+                    onInitialMessageHandled = onNotificationMessageHandled,
+                    onUnreadChanged = { refreshKey++ },
                     onOpenMedia = onOpenMedia,
                     onPlayVoice = onPlayVoice,
                     onUpdateProximity = onUpdateProximity,
@@ -404,7 +440,7 @@ private fun syncMessagesFromServer(context: Context): Int {
         Log.d("NogiRelay", "Syncing page $pageCount: ${page.size} messages, offset=$offset")
         
         page.forEach { message ->
-            if (AppGraph.database.insert(message)) inserted++
+            if (AppGraph.database.insert(message, isUnread = false)) inserted++
             if (message.type != MessageType.TEXT) {
                 runCatching { MediaDownloader.enqueueIfNeeded(context, message) }
                     .onFailure { error -> Log.w("NogiRelay", "Media download enqueue failed for ${message.id}", error) }
@@ -588,6 +624,7 @@ private fun MessagesScreen(
     refreshKey: Int,
     initialMessageId: String?,
     onInitialMessageHandled: (String) -> Unit,
+    onUnreadChanged: () -> Unit,
     onOpenMedia: (RelayMessage) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
     onUpdateProximity: (VoicePlaybackState) -> Unit,
@@ -596,6 +633,7 @@ private fun MessagesScreen(
     val downloadScope = rememberCoroutineScope()
     val retranslateScope = rememberCoroutineScope()
     val messages = remember(refreshKey) { AppGraph.database.latest() }
+    val unreadCounts = remember(refreshKey) { AppGraph.database.unreadCountsByMember() }
     val translationEnabled = remember(refreshKey) { AppGraph.settings.read().translationEnabled }
     val userNickname = remember(refreshKey) { AppGraph.settings.read().userNickname }
     val playbackState by VoicePlaybackService.playbackState.collectAsState()
@@ -605,6 +643,22 @@ private fun MessagesScreen(
     var pageInput by remember { mutableStateOf("1") }
     var pendingDownload by remember { mutableStateOf<RelayMessage?>(null) }
     var notificationScrollMessageId by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(selectedMemberId) {
+        val memberKey = selectedMemberId
+        if (memberKey != null) MessageReadTracker.openMember(memberKey)
+        onDispose {
+            if (memberKey != null) MessageReadTracker.closeMember(memberKey)
+        }
+    }
+
+    LaunchedEffect(selectedMemberId) {
+        val memberKey = selectedMemberId ?: return@LaunchedEffect
+        val updated = withContext(Dispatchers.IO) {
+            AppGraph.database.markMessagesReadForMember(memberKey)
+        }
+        if (updated > 0) onUnreadChanged()
+    }
     
     LaunchedEffect(playbackState) {
         onUpdateProximity(playbackState)
@@ -669,14 +723,14 @@ private fun MessagesScreen(
     }
 
     val threads = messages
-        .groupBy { it.memberId.ifBlank { it.memberName } }
+        .groupBy { it.memberKey }
         .map { (memberId, memberMessages) ->
             MemberThread(
                 id = memberId,
                 name = memberMessages.first().memberName,
                 avatarUrl = memberMessages.firstNotNullOfOrNull { it.memberAvatarUrl },
                 latest = memberMessages.first(),
-                count = memberMessages.size,
+                unreadCount = unreadCounts[memberId] ?: 0,
             )
         }
         .sortedByDescending { it.latest.sentAt }
@@ -960,7 +1014,7 @@ private data class MemberThread(
     val name: String,
     val avatarUrl: String?,
     val latest: RelayMessage,
-    val count: Int,
+    val unreadCount: Int,
 )
 
 @Composable
@@ -991,12 +1045,20 @@ private fun MemberInbox(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.width(92.dp).clickable { onSelect(thread) },
                     ) {
-                        RemoteImage(
-                            url = thread.avatarUrl,
-                            contentDescription = thread.name,
-                            modifier = Modifier.size(72.dp).clip(CircleShape),
-                            loadCachedImmediately = true,
-                        )
+                        Box {
+                            RemoteImage(
+                                url = thread.avatarUrl,
+                                contentDescription = thread.name,
+                                modifier = Modifier.size(72.dp).clip(CircleShape),
+                                loadCachedImmediately = true,
+                            )
+                            if (thread.unreadCount > 0) {
+                                Badge(
+                                    containerColor = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.align(Alignment.TopEnd).size(12.dp),
+                                )
+                            }
+                        }
                         Spacer(Modifier.height(6.dp))
                         Text(
                             thread.name,
@@ -1042,19 +1104,22 @@ private fun MemberInbox(
                             overflow = TextOverflow.Ellipsis,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 13.sp,
+                            modifier = Modifier.padding(end = 16.dp),
                         )
                     }
-                    Text(
-                        text = thread.count.toString(),
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    if (thread.unreadCount > 0) {
+                        Badge(containerColor = MaterialTheme.colorScheme.error) {
+                            Text(unreadBadgeLabel(thread.unreadCount))
+                        }
+                    }
                 }
             }
         }
         item { Spacer(Modifier.height(12.dp)) }
     }
 }
+
+private fun unreadBadgeLabel(count: Int): String = if (count > 99) "99+" else count.toString()
 
 private fun threadPreview(message: RelayMessage): String = when (message.type) {
     MessageType.TEXT -> message.text.orEmpty()

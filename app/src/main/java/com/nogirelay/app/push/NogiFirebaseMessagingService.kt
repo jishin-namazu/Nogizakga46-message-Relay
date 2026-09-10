@@ -10,6 +10,7 @@ import com.google.firebase.messaging.RemoteMessage
 import com.nogirelay.app.call.IncomingCallNotifier
 import com.nogirelay.app.call.IncomingCallPreparationService
 import com.nogirelay.app.data.AppGraph
+import com.nogirelay.app.data.MessageReadTracker
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.notification.NotificationChannels
@@ -32,7 +33,10 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         val result = runCatching { resolveMessage(remoteMessage.data) }
         val message = result.getOrNull() ?: return
-        val isNew = AppGraph.database.insert(message)
+        val isNew = AppGraph.database.insert(
+            message = message,
+            isUnread = !MessageReadTracker.isViewing(message.memberKey),
+        )
         if (!isNew) return
 
         if (message.shouldRing) {
