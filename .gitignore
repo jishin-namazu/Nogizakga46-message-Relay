@@ -25,6 +25,7 @@ analysis/fcm-poc/credentials-modern.json
 analysis/fcm-poc/persistent-ids.json
 
 # Local Codex/editor metadata
+/agents.md
 .claude/
 .codeartsdoer/
 .codegraph/

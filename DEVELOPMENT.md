@@ -120,7 +120,6 @@ nogizaka46msg/
 │   │   ├── services/                 消息、设备、媒体和 FCM 业务逻辑
 │   │   └── monitor/                  官网监控与媒体服务
 │   ├── database/schema.sql           当前数据库初始化脚本
-│   ├── db/schema.sql                 早期遗留 schema，仅供参考
 │   ├── .env.example                  本地环境变量模板
 │   ├── firebase-admin-key.json       本机 Firebase 服务端密钥，不提交
 │   └── nogi-browser-state.json       官网登录会话，不提交
@@ -228,8 +227,6 @@ psql $env:DATABASE_URL -f .\database\schema.sql
 ```powershell
 $token = Read-Host 'ACCESS_TOKEN'; Invoke-RestMethod -Method Post -Uri 'http://localhost:3000/init-db' -Headers @{ Authorization = "Bearer $token" }
 ```
-
-`server/db/schema.sql` 是早期版本，字段约束和当前代码存在差异；新环境应使用 `server/database/schema.sql` 或 `/init-db`。
 
 ### 启动 API
 
