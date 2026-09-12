@@ -83,9 +83,9 @@ Playwright 监控进程（monitor）
 
 ### BLOG 处理流程
 
-1. monitor 每隔 `NOGI_BLOG_POLL_INTERVAL_SECONDS` 请求公开 BLOG 接口。
-2. `blog_posts` 表只保存 ID、成员、标题、时间和链接等元数据，用于跨重启去重；`blog_sync_state` 保存上次完整成功轮询的精确头部 ID。
-3. 空表首次轮询作为基线，不把现有 BLOG 当作新通知；后续新 ID 通过 FCM 发送轻量元数据。
+1. monitor 每隔 `NOGI_BLOG_POLL_INTERVAL_SECONDS` 请求公开 BLOG 接口，每页默认 5 篇（由 `NOGI_BLOG_PAGE_SIZE` 配置）。
+2. `blog_posts` 表只保存 ID、成员、标题、时间和链接等元数据，用于跨重启去重；`blog_sync_state` 保存上次完整成功轮询的精确头部 ID。进程重启或会话文件更新导致浏览器重启时，博客 monitor 会继续运行并按该头部执行增量追赶。
+3. 空表首次轮询作为基线，持续翻页直到覆盖官网全部 BLOG，不把现有 BLOG 当作新通知；后续轮询遇到新 ID 后继续按页请求，直到遇到已保存的最新 ID 或到达列表末尾，再通过 FCM 发送新 ID 的轻量元数据。
 4. Android 首次从官网完整分页回填 BLOG；只有首尾 `count` 一致、唯一 ID 数等于官网总数，且最新页全部被本轮覆盖时才写入完成标记。后续增量同步追溯到上次完整成功保存的精确头部 ID，不会因中途失败已插入部分新 ID 而提前停止。
 5. BLOG 详情从正文 HTML 中提取文本和图片，不解析评论。
 6. 打开详情时，客户端将整篇文本的 `full_text` 和按连续三个及以上换行划分的 `segments` 在一次模型请求中提交。验证 JSON 数组后，每个译文段落插入对应原文段落之后。

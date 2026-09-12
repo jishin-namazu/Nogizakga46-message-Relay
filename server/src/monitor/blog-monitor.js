@@ -53,7 +53,7 @@ export class BlogMonitor {
     this.store = store;
     this.pusher = pusher;
     this.fetchPage = fetchPage;
-    this.pageSize = Math.max(Number.parseInt(process.env.NOGI_BLOG_PAGE_SIZE || '100', 10), 10);
+    this.pageSize = Math.max(Number.parseInt(process.env.NOGI_BLOG_PAGE_SIZE || '5', 10), 5);
     this.pollIntervalMs = Math.max(
       Number.parseInt(process.env.NOGI_BLOG_POLL_INTERVAL_SECONDS || '60', 10) * 1000,
       15_000,
@@ -93,7 +93,7 @@ export class BlogMonitor {
         stored += 1;
       }
 
-      if (baseline || boundaryReached || offset + page.posts.length >= page.total) {
+      if ((!baseline && boundaryReached) || offset + page.posts.length >= page.total) {
         completed = true;
         break;
       }
