@@ -11,6 +11,7 @@ object NotificationChannels {
     const val CALLS = "incoming_calls_v2"
     const val CALL_PREPARING = "incoming_call_prepare_v1"
     const val MESSAGES = "member_messages_v1"
+    const val BLOGS = "member_blogs_v1"
     const val PLAYBACK = "voice_playback_v1"
 
     fun create(context: Context) {
@@ -49,6 +50,15 @@ object NotificationChannels {
             NotificationManager.IMPORTANCE_LOW,
         ).apply { setSound(null, null) }
 
+        val blogs = NotificationChannel(
+            BLOGS,
+            "BLOG 更新",
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = "乃木坂46成员 BLOG 更新"
+            enableVibration(true)
+        }
+
         val preparing = NotificationChannel(
             CALL_PREPARING,
             "来电准备",
@@ -60,6 +70,6 @@ object NotificationChannels {
             setShowBadge(false)
         }
 
-        manager.createNotificationChannels(listOf(calls, preparing, messages, playback))
+        manager.createNotificationChannels(listOf(calls, preparing, messages, blogs, playback))
     }
 }

@@ -43,6 +43,8 @@
 | `NOGI_ACCEPT_LANGUAGE` | `zh-CN,en-US,ja` | 请求头 `Accept-Language` |
 | `NOGI_POLL_INTERVAL_SECONDS` | `60` | 轮询间隔，最小 15 |
 | `NOGI_BACKFILL_ON_START` | `true` | 是否在启动、新订阅和会话更新时导入历史 |
+| `NOGI_BLOG_POLL_INTERVAL_SECONDS` | `60` | 公开 BLOG 更新轮询间隔，最小 15 秒 |
+| `NOGI_BLOG_PAGE_SIZE` | `100` | 每次 BLOG API 分页数量，最小 10 |
 | `NOGI_BROWSER_STATE_FILE` | `/data/nogi-browser-state.json` | 浏览器会话文件 |
 | `NOGI_ACCESS_TOKEN_STATE_FILE` | 会话同目录 `nogi-access-token.json` | 访问令牌缓存 |
 | `NOGI_BROWSER_HEADLESS` | `true` | 是否无头运行 Chromium |

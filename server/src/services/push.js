@@ -1,4 +1,4 @@
-import { sendMulticastPush } from './firebase.js';
+import { buildBlogDataPayload, sendMulticastData, sendMulticastPush } from './firebase.js';
 import deviceService from './device.js';
 import db from '../db/index.js';
 
@@ -56,6 +56,16 @@ class PushService {
     console.log(`Pushing ${message.type} message: ${message.id}`);
 
     return await this.pushToAllDevices(message, userId);
+  }
+
+  async pushBlogPost(post, userId = null) {
+    const tokens = await deviceService.getAllTokens(userId);
+    if (tokens.length === 0) {
+      console.log('No devices to push blog post to');
+      return { success: false, error: 'No devices registered' };
+    }
+    console.log(`Pushing blog post ${post.id} to ${tokens.length} devices`);
+    return await sendMulticastData(tokens, buildBlogDataPayload(post), `blog:${post.id}`);
   }
 
   /**

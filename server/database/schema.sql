@@ -97,6 +97,30 @@ CREATE TABLE IF NOT EXISTS members (
 CREATE INDEX idx_members_name ON members(name);
 CREATE INDEX idx_members_generation ON members(generation);
 
+-- 公开 BLOG 只保存推送去重所需的元数据；正文由 Android 直接从官网同步。
+CREATE TABLE IF NOT EXISTS blog_posts (
+    id VARCHAR(255) PRIMARY KEY,
+    member_id VARCHAR(255),
+    member_name VARCHAR(255) NOT NULL,
+    member_avatar_url TEXT,
+    title TEXT NOT NULL,
+    image_url TEXT,
+    published_at TIMESTAMPTZ,
+    post_url TEXT NOT NULL,
+    notification_suppressed BOOLEAN NOT NULL DEFAULT false,
+    notification_attempted_at TIMESTAMPTZ,
+    discovered_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_blog_posts_published_at ON blog_posts(published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_blog_posts_member_id ON blog_posts(member_id);
+
+CREATE TABLE IF NOT EXISTS blog_sync_state (
+    state_key TEXT PRIMARY KEY,
+    state_value TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 插入测试数据（可选）
 INSERT INTO members (id, name, generation) VALUES
     ('saito_asuka', '齋藤飛鳥', 1),
@@ -125,3 +149,4 @@ COMMENT ON TABLE devices IS '设备注册表，存储 FCM tokens';
 COMMENT ON TABLE messages IS '消息表，存储所有从官网接收的消息';
 COMMENT ON TABLE push_logs IS '推送日志表，记录每次推送的结果';
 COMMENT ON TABLE members IS '成员信息表';
+COMMENT ON TABLE blog_posts IS '公开 BLOG 更新去重与推送元数据';

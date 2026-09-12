@@ -9,6 +9,7 @@
     "dev": "nodemon src/index.js",
     "monitor": "node src/monitor/index.js",
     "bootstrap:browser": "node src/monitor/bootstrap-browser.js",
+    "audit:blogs": "node scripts/audit-blog-api.js",
     "db:setup": "psql -U postgres -d nogi_relay -f database/schema.sql",
     "test": "node --test"
   },

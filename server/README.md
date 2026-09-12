@@ -7,8 +7,9 @@
 服务端代码入口：
 
 - `src/index.js`：REST API、健康检查和数据库兼容迁移。
-- `src/monitor/index.js`：监控进程入口，启动浏览器会话监控和媒体服务。
+- `src/monitor/index.js`：监控进程入口，启动浏览器会话监控、公开 BLOG 监控和媒体服务。
 - `src/monitor/nogi-browser.js`：浏览器会话监控模式，维护官网登录；启动、新订阅或会话更新时导入 `past_messages` 并遍历全部 timeline continuation 页面，之后轮询最新消息。
+- `src/monitor/blog-monitor.js`：无需登录的公开 BLOG 更新轮询；服务端只保存去重元数据并发送 FCM，不保存 BLOG 正文或评论。轮询边界按最后一次完整成功的头部 ID 持久化，失败重试不会遗留分页缺口。
 - `start-all.sh`：生产容器启动编排；API `/health` 成功后才启动 monitor、媒体服务和 Chromium。
 - `src/services/browser-session.js`：会话文件原子写入、内容版本和激活状态文件。
 - `upload-session.js`：上传会话并等待 monitor 完成官网 API 验证。

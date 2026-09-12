@@ -48,7 +48,7 @@ abstract class BaseAIProvider : AIProvider {
     @Suppress("UNUSED_PARAMETER")
     protected fun createPrompt(text: String, nickname: String): String {
         return """
-            你将收到一条完整日语消息，以及按原文顺序排列的文本片段。请结合完整消息的上下文，将所有文本片段翻译成简体中文。
+            你将收到一份完整日语内容（消息或 BLOG），以及按原文顺序排列的文本片段。请结合完整内容的上下文，将所有文本片段翻译成简体中文。
 
             要求：
             1. 人名必须保持原文，不得翻译、音译、改写或替换。

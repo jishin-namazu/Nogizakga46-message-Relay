@@ -15,6 +15,8 @@ import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.notification.NotificationChannels
 import com.nogirelay.app.translation.TranslationManager
+import com.nogirelay.app.blog.BlogNotifier
+import com.nogirelay.app.data.BlogReadTracker
 import org.json.JSONObject
 
 class NogiFirebaseMessagingService : FirebaseMessagingService() {
@@ -31,6 +33,15 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
+        if (remoteMessage.data["type"] == "blog") {
+            val blog = runCatching { AppGraph.blogClient.fromPush(remoteMessage.data) }
+                .onFailure { Log.w("NogiRelay", "Invalid BLOG push payload", it) }
+                .getOrNull() ?: return
+            if (AppGraph.database.upsertBlog(blog, isUnread = !BlogReadTracker.isViewing(blog.id))) {
+                BlogNotifier.show(this, blog)
+            }
+            return
+        }
         val result = runCatching { resolveMessage(remoteMessage.data) }
         val message = result.getOrNull() ?: return
         val isNew = AppGraph.database.insert(

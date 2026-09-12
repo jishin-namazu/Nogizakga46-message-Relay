@@ -12,6 +12,8 @@ object AppGraph {
         private set
     lateinit var relayClient: RelayClient
         private set
+    lateinit var blogClient: BlogClient
+        private set
 
     fun initialize(context: Context) {
         if (initialized) return
@@ -21,6 +23,7 @@ object AppGraph {
             settings = SettingsStore(appContext)
             database = MessageDatabase(appContext)
             relayClient = RelayClient()
+            blogClient = BlogClient()
             initialized = true
         }
     }

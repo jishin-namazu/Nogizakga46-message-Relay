@@ -66,6 +66,23 @@ export function buildDataPayload(message, includePayload) {
   return data;
 }
 
+export function buildBlogDataPayload(post) {
+  const publishedAt = post.published_at instanceof Date
+    ? post.published_at.toISOString()
+    : post.published_at;
+  return Object.fromEntries(Object.entries({
+    type: 'blog',
+    blog_id: String(post.id),
+    member_id: post.member_id || '',
+    member_name: post.member_name || '乃木坂46',
+    member_avatar_url: post.member_avatar_url || '',
+    title: post.title || '',
+    image_url: post.image_url || '',
+    published_at: publishedAt || '',
+    post_url: post.post_url || '',
+  }).map(([key, value]) => [key, String(value)]));
+}
+
 /**
  * 初始化 Firebase Admin SDK
  */
@@ -147,7 +164,33 @@ export async function sendMulticastPush(tokens, message) {
   }
 }
 
+export async function sendMulticastData(tokens, data, logId = 'data') {
+  if (!firebaseApp) initializeFirebase();
+  if (!tokens || tokens.length === 0) {
+    return { success: false, error: 'No tokens provided' };
+  }
+
+  try {
+    const response = await admin.messaging().sendEachForMulticast({
+      data,
+      android: { priority: 'high' },
+      tokens,
+    });
+    console.log(`FCM multicast ${logId}: ${response.successCount} success, ${response.failureCount} failed`);
+    return {
+      success: true,
+      successCount: response.successCount,
+      failureCount: response.failureCount,
+      responses: response.responses,
+    };
+  } catch (error) {
+    await recordError('firebase.multicast_data', error, { id: logId, token_count: tokens.length });
+    return { success: false, error: error.message };
+  }
+}
+
 export default {
   initializeFirebase,
   sendMulticastPush,
+  sendMulticastData,
 };

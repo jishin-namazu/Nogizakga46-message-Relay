@@ -2,7 +2,7 @@
 
 [![GitHub](https://img.shields.io/badge/GitHub-jishin--namazu%2FNogizakga46--message--Relay-blue?logo=github)](https://github.com/jishin-namazu/Nogizakga46-message-Relay)
 
-Nogi Relay 用于接收乃木坂46官方消息，归档文字和媒体，通过 Firebase Cloud Messaging（FCM）推送到 Android 客户端，并提供历史同步、搜索、分页、翻译和语音来电能力。
+Nogi Relay 用于接收乃木坂46官方消息和公开 BLOG 更新，通过 Firebase Cloud Messaging（FCM）推送到 Android 客户端，并提供历史同步、筛选、搜索、分页、翻译和语音来电能力。
 
 ## 文档
 
@@ -15,7 +15,8 @@ Nogi Relay 用于接收乃木坂46官方消息，归档文字和媒体，通过 
 
 ```text
 乃木坂46官网
-    -> Playwright monitor（会话、轮询、媒体归档）
+    -> Playwright monitor（私有消息会话、轮询、媒体归档）
+    -> 公开 BLOG monitor（只发现更新和推送元数据）
     -> PostgreSQL + Nogi Relay API
     -> Firebase Cloud Messaging
     -> Android 客户端（SQLite、通知、全屏语音来电）
@@ -34,6 +35,9 @@ monitor 保留当前有效访问令牌，只在令牌临近过期或官网 API �
 - 支持文字、图片、语音和视频消息。
 - 正式媒体按内容哈希归档到持久化卷；语音来电的背景图片同样归档，相同字节只保存一份。
 - FCM 高优先级数据推送，客户端按消息 ID 去重。
+- 服务端轮询官网公开 BLOG 接口，首次只建立基线，之后只推送新 BLOG；正文不经过 Relay 服务器。
+- Android BLOG Tab 直接从官网同步全部 BLOG 和官网成员目录，提供按分类展示的成员多选模块、带滑动指示器的时间正/倒序 Tab（默认最新优先）和每页 20 篇的跳页功能。列表按成员信息卡片、粗体标题、完整圆角图片排列，详情进出使用与消息一致的过渡动画；不抓取评论。FCM 新 BLOG 支持 Tab/卡片未读徽标，打开详情后标记已读。
+- BLOG 翻译复用客户端的模型配置，每篇只发送一次完整上下文，并在超过两个换行的段落边界后插入对应译文；每个译文块保留对应原文块的换行位置和数量，支持重新翻译。
 - 语音来电先完成音频下载，再显示来电通知和全屏来电页。
 - Android 客户端支持成员会话、未读徽标、全量搜索、分页、媒体查看、Download 文件夹保存和可选的上下文感知翻译；FCM 新消息会计入成员及底部“消息”页未读数，历史同步不制造未读，进入成员会话后清除该成员未读；点击普通消息通知会进入对应成员和分页，并把目标消息定位为列表顶部第一条，定位仅消费一次；翻译会保留人名、专有名词、代码以及原文的手动换行和空行结构。
 - 测试消息和测试来电不写入正式消息日志；旧版本遗留测试数据会在服务端和客户端启动时清理。
@@ -52,6 +56,24 @@ DEPLOYMENT.md           部署文档
 ## 安全边界
 
 Token、Firebase 服务账号、官网浏览器状态和模型供应商 API Key 都属于敏感数据，不提交到仓库。当前 API 使用共享 Bearer Token，适合私人部署；APK 的服务器地址和访问令牌都是构建期可选项（由本机 `local.properties` 注入，默认留空），公开分发前不要预置地址或内置令牌，应让使用者在设置页填写。
+
+### 本机预置 APK 配置
+
+需要构建个人调试包时，在项目根目录创建未提交的 `local.properties`（保留已有的 `sdk.dir`）：
+
+```properties
+sdk.dir=C:\\Users\\YOUR_USER\\AppData\\Local\\Android\\Sdk
+relay.baseUrl=https://YOUR_RELAY_HOST
+relay.access.token=YOUR_ACCESS_TOKEN
+```
+
+随后执行：
+
+```powershell
+.\\gradlew.bat :app:assembleDebug -PrelaySimpleUi=true --no-daemon
+```
+
+`relaySimpleUi=true` 会隐藏设置页中的服务器地址和令牌输入框，并使用上述构建期值。默认构建不注入这些值。地址和令牌会编译进 APK，仅适用于个人调试包；构建完成后应从 `local.properties` 删除这两项，避免误将凭据带入后续构建。
 
 ## 许可证与使用范围
 

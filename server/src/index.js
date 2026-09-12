@@ -152,6 +152,28 @@ app.post('/init-db', authenticate, async (req, res) => {
       CREATE INDEX IF NOT EXISTS idx_members_name ON members(name);
       CREATE INDEX IF NOT EXISTS idx_members_generation ON members(generation);
 
+      CREATE TABLE IF NOT EXISTS blog_posts (
+          id VARCHAR(255) PRIMARY KEY,
+          member_id VARCHAR(255),
+          member_name VARCHAR(255) NOT NULL,
+          member_avatar_url TEXT,
+          title TEXT NOT NULL,
+          image_url TEXT,
+          published_at TIMESTAMPTZ,
+          post_url TEXT NOT NULL,
+          notification_suppressed BOOLEAN NOT NULL DEFAULT false,
+          notification_attempted_at TIMESTAMPTZ,
+          discovered_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_blog_posts_published_at ON blog_posts(published_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_blog_posts_member_id ON blog_posts(member_id);
+      CREATE TABLE IF NOT EXISTS blog_sync_state (
+          state_key TEXT PRIMARY KEY,
+          state_value TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
       -- 插入测试数据
       INSERT INTO members (id, name, generation) VALUES
           ('saito_asuka', '齋藤飛鳥', 1),
@@ -220,6 +242,26 @@ async function ensureMessageMediaColumns() {
       );
       CREATE INDEX IF NOT EXISTS idx_error_logs_created_at ON error_logs(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_error_logs_scope ON error_logs(scope);
+      CREATE TABLE IF NOT EXISTS blog_posts (
+          id VARCHAR(255) PRIMARY KEY,
+          member_id VARCHAR(255),
+          member_name VARCHAR(255) NOT NULL,
+          member_avatar_url TEXT,
+          title TEXT NOT NULL,
+          image_url TEXT,
+          published_at TIMESTAMPTZ,
+          post_url TEXT NOT NULL,
+          notification_suppressed BOOLEAN NOT NULL DEFAULT false,
+          notification_attempted_at TIMESTAMPTZ,
+          discovered_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_blog_posts_published_at ON blog_posts(published_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_blog_posts_member_id ON blog_posts(member_id);
+      CREATE TABLE IF NOT EXISTS blog_sync_state (
+          state_key TEXT PRIMARY KEY,
+          state_value TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
     `);
     console.log('Database message media columns verified');
   } catch (error) {

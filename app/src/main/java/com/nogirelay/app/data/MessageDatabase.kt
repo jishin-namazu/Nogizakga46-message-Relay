@@ -34,6 +34,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         )
         db.execSQL("CREATE INDEX idx_messages_sent_at ON messages(sent_at DESC)")
         db.execSQL("CREATE INDEX idx_messages_unread_member ON messages(is_unread, member_id, member_name)")
+        createBlogTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -50,6 +51,65 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             db.execSQL("ALTER TABLE messages ADD COLUMN is_unread INTEGER NOT NULL DEFAULT 0")
             db.execSQL("CREATE INDEX idx_messages_unread_member ON messages(is_unread, member_id, member_name)")
         }
+        if (oldVersion < 5) createBlogTables(db)
+        if (oldVersion in 5 until 6) {
+            db.execSQL("ALTER TABLE blog_posts ADD COLUMN is_unread INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_blog_posts_unread ON blog_posts(is_unread, published_at DESC)")
+        }
+        if (oldVersion < 7) {
+            createBlogMemberTable(db)
+            // v7 restores every translated BLOG line break from the source layout.
+            db.execSQL("UPDATE blog_posts SET translation = NULL, translation_done = 0")
+        }
+    }
+
+    private fun createBlogTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS blog_posts (
+                id TEXT PRIMARY KEY,
+                member_id TEXT NOT NULL,
+                member_name TEXT NOT NULL,
+                member_avatar_url TEXT,
+                title TEXT NOT NULL,
+                body_html TEXT NOT NULL,
+                image_url TEXT,
+                published_at TEXT NOT NULL,
+                post_url TEXT NOT NULL,
+                translation TEXT,
+                translation_done INTEGER NOT NULL DEFAULT 0,
+                is_unread INTEGER NOT NULL DEFAULT 0,
+                received_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_blog_posts_date ON blog_posts(published_at DESC, id DESC)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_blog_posts_member ON blog_posts(member_id, member_name)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_blog_posts_unread ON blog_posts(is_unread, published_at DESC)")
+        createBlogMemberTable(db)
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS sync_state (
+                state_key TEXT PRIMARY KEY,
+                state_value TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
+    }
+
+    private fun createBlogMemberTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS blog_members (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                category TEXT NOT NULL,
+                avatar_url TEXT,
+                display_order INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_blog_members_order ON blog_members(display_order ASC)")
     }
 
     fun insert(message: RelayMessage, isUnread: Boolean = false): Boolean {
@@ -285,6 +345,262 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         writableDatabase.update("messages", values, "id = ?", arrayOf(id))
     }
 
+    fun upsertBlog(post: BlogPost, isUnread: Boolean = false): Boolean {
+        val values = ContentValues().apply {
+            put("id", post.id)
+            put("member_id", post.memberId)
+            put("member_name", post.memberName)
+            put("member_avatar_url", post.memberAvatarUrl)
+            put("title", post.title)
+            put("body_html", post.bodyHtml)
+            put("image_url", post.imageUrl)
+            put("published_at", post.publishedAt)
+            put("post_url", post.postUrl)
+            put("translation", post.translation)
+            put("translation_done", if (post.translationDone) 1 else 0)
+            put("is_unread", if (isUnread || post.isUnread) 1 else 0)
+            put("received_at", System.currentTimeMillis())
+        }
+        val inserted = writableDatabase.insertWithOnConflict(
+            "blog_posts",
+            null,
+            values,
+            SQLiteDatabase.CONFLICT_IGNORE,
+        ) != -1L
+        if (inserted) return true
+
+        val existingBody = readableDatabase.query(
+            "blog_posts",
+            arrayOf("body_html"),
+            "id = ?",
+            arrayOf(post.id),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else "" }
+        val update = ContentValues().apply {
+            put("member_id", post.memberId)
+            put("member_name", post.memberName)
+            put("member_avatar_url", post.memberAvatarUrl)
+            put("title", post.title)
+            put("image_url", post.imageUrl)
+            put("published_at", post.publishedAt)
+            put("post_url", post.postUrl)
+            if (post.bodyHtml.isNotBlank()) {
+                put("body_html", post.bodyHtml)
+                if (existingBody.isNotBlank() && existingBody != post.bodyHtml) {
+                    put("translation", null as String?)
+                    put("translation_done", 0)
+                }
+            }
+        }
+        writableDatabase.update("blog_posts", update, "id = ?", arrayOf(post.id))
+        return false
+    }
+
+    fun hasBlog(id: String): Boolean = readableDatabase.query(
+        "blog_posts",
+        arrayOf("id"),
+        "id = ?",
+        arrayOf(id),
+        null,
+        null,
+        null,
+        "1",
+    ).use(Cursor::moveToFirst)
+
+    fun blogSummaries(
+        memberIds: Set<String>? = null,
+        oldestFirst: Boolean = false,
+        limit: Int = 20,
+        offset: Int = 0,
+    ): List<BlogSummary> {
+        val result = mutableListOf<BlogSummary>()
+        val filter = blogMemberFilter(memberIds)
+        readableDatabase.query(
+            "blog_posts",
+            arrayOf("id", "member_id", "member_name", "member_avatar_url", "title", "image_url", "published_at", "is_unread", "translation"),
+            filter.selection,
+            filter.arguments,
+            null,
+            null,
+            if (oldestFirst) "published_at ASC, id ASC" else "published_at DESC, id DESC",
+            "${limit.coerceIn(1, 100)} OFFSET ${offset.coerceAtLeast(0)}",
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += BlogSummary(
+                    id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                    memberId = cursor.getString(cursor.getColumnIndexOrThrow("member_id")),
+                    memberName = cursor.getString(cursor.getColumnIndexOrThrow("member_name")),
+                    memberAvatarUrl = cursor.nullableString("member_avatar_url"),
+                    title = cursor.getString(cursor.getColumnIndexOrThrow("title")),
+                    imageUrl = cursor.nullableString("image_url"),
+                    publishedAt = cursor.getString(cursor.getColumnIndexOrThrow("published_at")),
+                    isUnread = cursor.getInt(cursor.getColumnIndexOrThrow("is_unread")) == 1,
+                    translatedTitle = cursor.nullableString("translation")?.let(::translatedTitleFromJson),
+                )
+            }
+        }
+        return result
+    }
+
+    private fun translatedTitleFromJson(serialized: String): String? = runCatching {
+        org.json.JSONArray(serialized).optString(0).takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    fun countBlogs(memberIds: Set<String>? = null): Int {
+        val filter = blogMemberFilter(memberIds)
+        return readableDatabase.query(
+            "blog_posts",
+            arrayOf("COUNT(*)"),
+            filter.selection,
+            filter.arguments,
+            null,
+            null,
+            null,
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+    }
+
+    fun blogMembers(): List<BlogMember> {
+        val result = mutableListOf<BlogMember>()
+        readableDatabase.query(
+            "blog_members",
+            null,
+            null,
+            null,
+            null,
+            null,
+            "display_order ASC",
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += BlogMember(
+                    id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                    name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
+                    category = cursor.getString(cursor.getColumnIndexOrThrow("category")),
+                    avatarUrl = cursor.nullableString("avatar_url"),
+                    displayOrder = cursor.getInt(cursor.getColumnIndexOrThrow("display_order")),
+                )
+            }
+        }
+        return result
+    }
+
+    fun replaceBlogMembers(members: List<BlogMember>) {
+        require(members.isNotEmpty()) { "官网成员列表为空" }
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("blog_members", null, null)
+            members.forEach { member ->
+                val values = ContentValues().apply {
+                    put("id", member.id)
+                    put("name", member.name)
+                    put("category", member.category)
+                    put("avatar_url", member.avatarUrl)
+                    put("display_order", member.displayOrder)
+                }
+                db.insertOrThrow("blog_members", null, values)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun findBlog(id: String): BlogPost? = readableDatabase.query(
+        "blog_posts",
+        null,
+        "id = ?",
+        arrayOf(id),
+        null,
+        null,
+        null,
+        "1",
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.toBlogPost() else null }
+
+    fun saveBlogTranslation(id: String, translation: String?) {
+        val values = ContentValues().apply {
+            put("translation", translation?.takeIf { it.isNotBlank() })
+            put("translation_done", 1)
+        }
+        writableDatabase.update("blog_posts", values, "id = ?", arrayOf(id))
+    }
+
+    fun markBlogForRetranslation(id: String) {
+        val values = ContentValues().apply {
+            put("translation", null as String?)
+            put("translation_done", 0)
+        }
+        writableDatabase.update("blog_posts", values, "id = ?", arrayOf(id))
+    }
+
+    fun countUnreadBlogs(): Int = readableDatabase.query(
+        "blog_posts",
+        arrayOf("COUNT(*)"),
+        "is_unread = 1",
+        null,
+        null,
+        null,
+        null,
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+
+    fun markBlogRead(id: String): Int {
+        val values = ContentValues().apply { put("is_unread", 0) }
+        return writableDatabase.update("blog_posts", values, "id = ? AND is_unread = 1", arrayOf(id))
+    }
+
+    fun isBlogFullSyncComplete(): Boolean = readableDatabase.query(
+        "sync_state",
+        arrayOf("state_value"),
+        "state_key = ?",
+        arrayOf(BLOG_FULL_SYNC_KEY),
+        null,
+        null,
+        null,
+        "1",
+    ).use { cursor -> cursor.moveToFirst() && cursor.getString(0) == "1" }
+
+    fun blogSyncHeadId(): String? = readableDatabase.query(
+        "sync_state",
+        arrayOf("state_value"),
+        "state_key = ?",
+        arrayOf(BLOG_SYNC_HEAD_KEY),
+        null,
+        null,
+        null,
+        "1",
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0).takeIf { it.isNotBlank() } else null }
+
+    fun markBlogFullSyncComplete(headId: String?) {
+        val values = ContentValues().apply {
+            put("state_key", BLOG_FULL_SYNC_KEY)
+            put("state_value", "1")
+        }
+        writableDatabase.insertWithOnConflict("sync_state", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        markBlogSyncHead(headId)
+    }
+
+    fun markBlogSyncHead(headId: String?) {
+        if (headId.isNullOrBlank()) return
+        val values = ContentValues().apply {
+            put("state_key", BLOG_SYNC_HEAD_KEY)
+            put("state_value", headId)
+        }
+        writableDatabase.insertWithOnConflict("sync_state", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    private fun blogMemberFilter(memberIds: Set<String>?): QueryFilter = when {
+        memberIds == null -> QueryFilter("", emptyArray())
+        memberIds.isEmpty() -> QueryFilter("0", emptyArray())
+        else -> QueryFilter(
+            "member_id IN (${memberIds.joinToString(",") { "?" }})",
+            memberIds.toTypedArray(),
+        )
+    }.let { filter ->
+        if (filter.selection.isBlank()) QueryFilter("1", emptyArray()) else filter
+    }
+
     private fun memberFilter(memberKey: String, searchQuery: String): QueryFilter {
         val clauses = mutableListOf(
             "id NOT GLOB ?",
@@ -341,6 +657,21 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         translationDone = getInt(getColumnIndexOrThrow("translation_done")) == 1,
     )
 
+    private fun Cursor.toBlogPost(): BlogPost = BlogPost(
+        id = getString(getColumnIndexOrThrow("id")),
+        memberId = getString(getColumnIndexOrThrow("member_id")),
+        memberName = getString(getColumnIndexOrThrow("member_name")),
+        memberAvatarUrl = nullableString("member_avatar_url"),
+        title = getString(getColumnIndexOrThrow("title")),
+        bodyHtml = getString(getColumnIndexOrThrow("body_html")),
+        imageUrl = nullableString("image_url"),
+        publishedAt = getString(getColumnIndexOrThrow("published_at")),
+        postUrl = getString(getColumnIndexOrThrow("post_url")),
+        translation = nullableString("translation"),
+        translationDone = getInt(getColumnIndexOrThrow("translation_done")) == 1,
+        isUnread = getInt(getColumnIndexOrThrow("is_unread")) == 1,
+    )
+
     private fun Cursor.nullableString(column: String): String? {
         val index = getColumnIndexOrThrow(column)
         return if (isNull(index)) null else getString(index)
@@ -353,8 +684,10 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
 
     companion object {
         private const val DB_NAME = "messages.db"
-        private const val DB_VERSION = 4
+        private const val DB_VERSION = 7
         private const val TEST_MESSAGE_GLOB = "test[-_]*"
         private const val MEMBER_MESSAGE_ORDER = "sent_at DESC, received_at DESC, id DESC"
+        private const val BLOG_FULL_SYNC_KEY = "blog_full_sync_complete_v2"
+        private const val BLOG_SYNC_HEAD_KEY = "blog_sync_head_id_v2"
     }
 }

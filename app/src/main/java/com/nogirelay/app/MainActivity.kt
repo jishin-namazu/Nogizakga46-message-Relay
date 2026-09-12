@@ -43,6 +43,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material.icons.rounded.Article
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -114,8 +115,12 @@ import com.nogirelay.app.call.FullScreenPermission
 import com.nogirelay.app.call.IncomingCallActivity
 import com.nogirelay.app.call.IncomingCallNotifier
 import com.nogirelay.app.call.OverlayPermission
+import com.nogirelay.app.blog.BlogNotifier
+import com.nogirelay.app.blog.BlogScreen
+import com.nogirelay.app.blog.BlogMediaDownloader
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.AppSettings
+import com.nogirelay.app.data.BlogReadTracker
 import com.nogirelay.app.data.MessageReadTracker
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
@@ -154,6 +159,7 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
     private val syncRequests = MutableStateFlow(0L)
     private val notificationMessageIds = MutableStateFlow<String?>(null)
+    private val notificationBlogIds = MutableStateFlow<String?>(null)
     private lateinit var proximityControl: com.nogirelay.app.call.ProximityScreenControl
     private lateinit var audioManager: android.media.AudioManager
 
@@ -179,13 +185,18 @@ class MainActivity : ComponentActivity() {
         proximityControl = com.nogirelay.app.call.OfficialProximityScreenControl(this)
         audioManager = getSystemService(android.media.AudioManager::class.java)
         notificationMessageIds.value = intent.getStringExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID)
+        notificationBlogIds.value = intent.getStringExtra(BlogNotifier.EXTRA_BLOG_ID)
 
         setContent {
             NogiRelayTheme {
                 RelayApp(
                     notificationMessageIds = notificationMessageIds,
+                    notificationBlogIds = notificationBlogIds,
                     onNotificationMessageHandled = { handledId ->
                         notificationMessageIds.compareAndSet(handledId, null)
+                    },
+                    onNotificationBlogHandled = { handledId ->
+                        notificationBlogIds.compareAndSet(handledId, null)
                     },
                     onOpenMedia = ::openMedia,
                     onPlayVoice = ::playVoice,
@@ -201,11 +212,13 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         MessageReadTracker.setAppVisible(true)
+        BlogReadTracker.setAppVisible(true)
         syncRequests.update { it + 1 }
     }
 
     override fun onStop() {
         MessageReadTracker.setAppVisible(false)
+        BlogReadTracker.setAppVisible(false)
         super.onStop()
     }
 
@@ -214,6 +227,9 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         intent.getStringExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID)?.let {
             notificationMessageIds.value = it
+        }
+        intent.getStringExtra(BlogNotifier.EXTRA_BLOG_ID)?.let {
+            notificationBlogIds.value = it
         }
     }
 
@@ -277,13 +293,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class AppTab(val label: String) { HOME("概览"), MESSAGES("消息"), SETTINGS("设置") }
+private enum class AppTab(val label: String) { HOME("概览"), MESSAGES("消息"), BLOG("博客"), SETTINGS("设置") }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RelayApp(
     notificationMessageIds: StateFlow<String?>,
+    notificationBlogIds: StateFlow<String?>,
     onNotificationMessageHandled: (String) -> Unit,
+    onNotificationBlogHandled: (String) -> Unit,
     onOpenMedia: (RelayMessage) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
     onTestCall: () -> Unit,
@@ -293,7 +311,16 @@ private fun RelayApp(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val initialMessageId by notificationMessageIds.collectAsState()
-    var tab by remember { mutableStateOf(if (initialMessageId == null) AppTab.HOME else AppTab.MESSAGES) }
+    val initialBlogId by notificationBlogIds.collectAsState()
+    var tab by remember {
+        mutableStateOf(
+            when {
+                initialBlogId != null -> AppTab.BLOG
+                initialMessageId != null -> AppTab.MESSAGES
+                else -> AppTab.HOME
+            },
+        )
+    }
     var notificationGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
     var fullScreenGranted by remember { mutableStateOf(FullScreenPermission.canUse(context)) }
     var overlayGranted by remember { mutableStateOf(OverlayPermission.canUse(context)) }
@@ -301,9 +328,13 @@ private fun RelayApp(
     var syncing by remember { mutableStateOf(false) }
     var syncLabel by remember { mutableStateOf("") }
     val unreadMessageCount = remember(refreshKey) { AppGraph.database.countUnreadMessages() }
+    val unreadBlogCount = remember(refreshKey) { AppGraph.database.countUnreadBlogs() }
 
     LaunchedEffect(initialMessageId) {
         if (initialMessageId != null) tab = AppTab.MESSAGES
+    }
+    LaunchedEffect(initialBlogId) {
+        if (initialBlogId != null) tab = AppTab.BLOG
     }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -323,10 +354,16 @@ private fun RelayApp(
     LaunchedEffect(syncRequests) {
         syncRequests.collectLatest {
             syncing = true
-            val result = runCatching { withContext(Dispatchers.IO) { syncMessagesFromServer(context) } }
+            val result = runCatching { withContext(Dispatchers.IO) { syncContent(context) } }
             syncing = false
             syncLabel = result.fold(
-                onSuccess = { count -> if (count > 0) "已同步 $count 条历史消息" else "历史消息已是最新" },
+                onSuccess = { outcome ->
+                    if (outcome.messages > 0 || outcome.blogs > 0) {
+                        "已同步 ${outcome.messages} 条消息、${outcome.blogs} 篇博客"
+                    } else {
+                        "消息和博客已是最新"
+                    }
+                },
                 onFailure = { error ->
                     Log.w("NogiRelay", "History sync failed", error)
                     error.message ?: "历史消息同步失败"
@@ -364,9 +401,14 @@ private fun RelayApp(
                         icon = {
                             BadgedBox(
                                 badge = {
-                                    if (item == AppTab.MESSAGES && unreadMessageCount > 0) {
+                                    val count = when (item) {
+                                        AppTab.MESSAGES -> unreadMessageCount
+                                        AppTab.BLOG -> unreadBlogCount
+                                        else -> 0
+                                    }
+                                    if (count > 0) {
                                         Badge(containerColor = MaterialTheme.colorScheme.error) {
-                                            Text(unreadBadgeLabel(unreadMessageCount))
+                                            Text(unreadBadgeLabel(count))
                                         }
                                     }
                                 },
@@ -375,6 +417,7 @@ private fun RelayApp(
                                     imageVector = when (item) {
                                         AppTab.HOME -> Icons.Rounded.Home
                                         AppTab.MESSAGES -> Icons.Rounded.Inbox
+                                        AppTab.BLOG -> Icons.Rounded.Article
                                         AppTab.SETTINGS -> Icons.Rounded.Settings
                                     },
                                     contentDescription = item.label,
@@ -422,10 +465,111 @@ private fun RelayApp(
                     onUpdateProximity = onUpdateProximity,
                 )
 
+                AppTab.BLOG -> BlogScreen(
+                    refreshKey = refreshKey,
+                    initialBlogId = initialBlogId,
+                    onInitialBlogHandled = onNotificationBlogHandled,
+                    onUnreadChanged = { refreshKey++ },
+                )
+
                 AppTab.SETTINGS -> SettingsScreen()
             }
         }
     }
+}
+
+private data class SyncOutcome(val messages: Int, val blogs: Int)
+
+private fun syncContent(context: Context): SyncOutcome {
+    val messageResult = runCatching { syncMessagesFromServer(context) }
+    val blogResult = runCatching { syncBlogsFromOfficial(context) }
+    if (messageResult.isFailure && blogResult.isFailure) {
+        throw IllegalStateException(
+            "消息同步失败：${messageResult.exceptionOrNull()?.message}；BLOG 同步失败：${blogResult.exceptionOrNull()?.message}",
+        )
+    }
+    messageResult.exceptionOrNull()?.let { Log.w("NogiRelay", "Message sync failed", it) }
+    blogResult.exceptionOrNull()?.let { Log.w("NogiRelay", "BLOG sync failed", it) }
+    return SyncOutcome(messageResult.getOrDefault(0), blogResult.getOrDefault(0))
+}
+
+private fun syncBlogsFromOfficial(context: Context): Int {
+    val pageSize = 100
+    runCatching {
+        AppGraph.database.replaceBlogMembers(AppGraph.blogClient.fetchMembers())
+    }.onFailure { error ->
+        Log.w("NogiRelay", "BLOG member directory sync failed; keeping the last successful list", error)
+    }
+    val fullSyncComplete = AppGraph.database.isBlogFullSyncComplete()
+    val syncBoundaryId = AppGraph.database.blogSyncHeadId()
+    var inserted = 0
+
+    if (fullSyncComplete && syncBoundaryId != null) {
+        var offset = 0
+        var newestId: String? = null
+        var expectedCount: Int? = null
+        var completed = false
+        while (true) {
+            val page = AppGraph.blogClient.fetchPage(limit = pageSize, offset = offset)
+            if (expectedCount == null) expectedCount = page.total
+            if (page.posts.isEmpty()) {
+                if (offset >= page.total) completed = true else error("BLOG 增量分页在尾页前返回空数据")
+                break
+            }
+            if (newestId == null) newestId = page.posts.firstOrNull()?.id
+            val boundaryReached = page.posts.any { it.id == syncBoundaryId }
+            page.posts.forEach { post ->
+                if (AppGraph.database.upsertBlog(post)) inserted += 1
+                BlogMediaDownloader.enqueue(context, post)
+            }
+            offset += page.posts.size
+            if (boundaryReached || offset >= page.total || page.posts.size < pageSize) {
+                completed = true
+                break
+            }
+        }
+        val finalCount = AppGraph.blogClient.fetchCount()
+        val finalHeadId = AppGraph.blogClient.fetchPage(limit = 1, offset = 0).posts.firstOrNull()?.id
+        if (!completed || finalCount != expectedCount || finalHeadId != newestId) {
+            error("BLOG 增量同步期间官网列表发生变化；未移动同步边界，下次将安全重试")
+        }
+        AppGraph.database.markBlogSyncHead(newestId)
+        Log.d("NogiRelay", "BLOG incremental sync complete: inserted=$inserted")
+        return inserted
+    }
+
+    repeat(3) { attempt ->
+        val expectedCount = AppGraph.blogClient.fetchCount()
+        val seenIds = mutableSetOf<String>()
+        var offset = 0
+        var stable = true
+        while (offset < expectedCount) {
+            val page = AppGraph.blogClient.fetchPage(limit = pageSize, offset = offset)
+            if (page.total != expectedCount || page.posts.isEmpty()) {
+                stable = false
+                break
+            }
+            page.posts.forEach { post ->
+                seenIds += post.id
+                if (AppGraph.database.upsertBlog(post)) inserted += 1
+                BlogMediaDownloader.enqueue(context, post)
+            }
+            offset += page.posts.size
+        }
+        val finalCount = AppGraph.blogClient.fetchCount()
+        val finalHead = AppGraph.blogClient.fetchPage(limit = pageSize, offset = 0)
+        val headCovered = finalHead.posts.all { it.id in seenIds }
+        if (stable && expectedCount == finalCount && seenIds.size == finalCount && headCovered) {
+            AppGraph.database.markBlogFullSyncComplete(finalHead.posts.firstOrNull()?.id)
+            Log.d("NogiRelay", "BLOG full sync verified: count=$finalCount, attempts=${attempt + 1}")
+            return inserted
+        }
+        Log.w(
+            "NogiRelay",
+            "BLOG full sync snapshot changed; retrying: expected=$expectedCount, final=$finalCount, unique=${seenIds.size}, headCovered=$headCovered",
+        )
+    }
+    error("BLOG 列表在同步期间持续变化；已保存抓到的内容，但未标记全量完成，下次会重新校验")
 }
 
 private fun syncMessagesFromServer(context: Context): Int {

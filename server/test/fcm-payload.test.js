@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const { buildDataPayload, pushPayload } = await import('../src/services/firebase.js');
+const { buildBlogDataPayload, buildDataPayload, pushPayload } = await import('../src/services/firebase.js');
 
 function message(overrides = {}) {
   return {
@@ -52,4 +52,20 @@ test('honours includePayload=false without ever exceeding the cap', () => {
 
   assert.equal(data.payload, undefined);
   assert.deepEqual(Object.keys(data).sort(), ['message_id', 'type']);
+});
+
+test('builds a lightweight blog notification without body HTML', () => {
+  const data = buildBlogDataPayload({
+    id: '104835',
+    member_id: '63107',
+    member_name: '瀬戸口 心月',
+    title: 'ヒグラシの声がする',
+    published_at: '2026-09-12T20:37:40+09:00',
+    post_url: 'https://www.nogizaka46.com/s/n46/diary/detail/104835',
+  });
+
+  assert.equal(data.type, 'blog');
+  assert.equal(data.blog_id, '104835');
+  assert.equal(data.text, undefined);
+  assert.ok(Buffer.byteLength(JSON.stringify(data), 'utf8') < 4096);
 });
